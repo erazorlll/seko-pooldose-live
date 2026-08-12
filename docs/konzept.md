@@ -239,11 +239,62 @@ nur für den Regler, nicht pauschal.
 |---|---|
 | **Eigene Domain `pooldose_live`**, nicht `pooldose` | Ein Custom-Component mit Domain `pooldose` überschreibt die Core-Integration global. Eigene Domain → beide parallel installierbar, sauberer Vergleich, kein Reibungspunkt mit HA-Updates. |
 | `iot_class: local_push` | fachlich korrekt und macht den Unterschied nach außen sichtbar |
-| **Mapping-JSONs vendorn** statt `python-pooldose` als Requirement | (a) Core pinnt hart `python-pooldose==0.9.6`; ein abweichender Pin in unserem `manifest.json` bricht die Core-Integration im selben Env. (b) Wir bräuchten `InstantValues`, das kein dokumentiertes Public-API ist. (c) Wir brauchen ohnehin andere Semantik (`visible`, `alarm`, `minT/maxT`, Fallback). MIT-Lizenz erlaubt das Kopieren mit Attribution; ein kleines Sync-Skript hält die Dateien nach. |
+| **Mapping-JSONs vendorn** statt `python-pooldose` als Requirement | siehe 5.2 — ausführlich begründet |
 | **v1 liest nur über WS, schreibt über HTTP** | Das WS-Schreibformat ist unbekannt und die Spec warnt zu Recht: ein falsch geformter Frame verstellt Parameter einer realen Dosieranlage. `setInstantValues` ist bekannt und erprobt. |
 | **Genau eine WS-Verbindung pro Gerät** | Spec-Empfehlung; Verbindung lebt im Config-Entry, nicht pro Entity |
 
-### 5.2 Schichten
+### 5.2 Umgang mit `python-pooldose`: Mappings kopieren, Code selbst schreiben
+
+Drei Optionen standen zur Wahl: (a) als Requirement einbinden, (b) Teile übernehmen,
+(c) komplett eigenständig. Entscheidung: **(b), eng gefasst — nur die Mapping-JSONs.**
+
+**Gegen (a) — Einbinden als Requirement:**
+
+1. *Was wir bräuchten, ist kein Public API.* `docs/api-reference.md` dokumentiert
+   `PooldoseClient`, `RequestStatus` und von `InstantValues` nur das Dict-Interface
+   plus die Setter. Der Konstruktor
+   `InstantValues(device_data, mapping, prefix, device_id, request_handler)` ist
+   nirgends dokumentiert und wird nur bibliotheksintern aufgerufen
+   (`client.py:288`, `mock_client.py:211`). Genau den bräuchten wir, um
+   WS-Snapshots hineinzureichen — der dokumentierte Weg `client.instant_values()`
+   holt zwingend per HTTP. Dasselbe gilt für `RequestHandler.set_value` beim
+   Schreiben. Wir würden uns an zwei interne Signaturen hängen.
+2. *Version-Pin-Konflikt.* Core pinnt `python-pooldose==0.9.6`. Laufen beide
+   Integrationen im selben Env und wir pinnen abweichend, arbeiten die
+   Requirement-Checks gegeneinander. Wir müssten dauerhaft Cores Pin folgen — und
+   verlieren damit den einzigen Grund für eine Abhängigkeit.
+3. *Wir brauchen ohnehin andere Semantik.* `visible`, `alarm`, `minT/maxT`,
+   `set` vs. `current`, Raw-Fallback — nichts davon liefert `InstantValues`. Wir
+   würden die Bibliothek einbinden und die Hälfte ihrer Verarbeitung umgehen.
+
+**Gegen (c) — alles selbst:** Die 1.302 Zeilen Mapping-JSON sind der eigentliche
+Wert des Repos. Die Hash-Keys sind opak und nicht herleitbar; die Tabellen sind von
+Hand aus Debug-Dumps entstanden (unser Modell: Community-Beitrag in Issue #20).
+Nachbauen wäre Wertvernichtung.
+
+**Aufteilung:**
+
+| Bestandteil | Herkunft |
+|---|---|
+| 6 Mapping-JSONs + `MODEL_ALIASES` | kopiert, MIT, Attribution im Dateikopf und in der README |
+| WS-Transport, Reassembly, Watchdog | eigen — existiert dort nicht |
+| Decoder Roh → `Channel` | eigen, ~150–200 Zeilen; weniger Aufwand als `InstantValues` zu beugen |
+| Mapping-Loader mit FW-Fallback | eigen — der dortige ist strikt (Befund B2) |
+| Schreiben `POST setInstantValues` | eigen, ~30 Zeilen: `{device_id: {full_key: [{"value": v, "type": "NUMBER"}]}}` |
+
+Damit: keine Runtime-Dependency, kein Konflikt mit der Core-Integration, keine
+Kopplung an undokumentierte Signaturen.
+
+*Preis:* Die Mappings driften. Gegenmaßnahme: CI-Job, der wöchentlich gegen Upstream
+diffed und bei Abweichung ein Issue öffnet — plus der Raw-Modus (5.5), der neue
+Geräte ohnehin besser abfängt als Upstream.
+
+*Bedingung für einen Wechsel zu (a):* wenn `python-pooldose` den
+`InstantValues`-Konstruktor als API dokumentiert und die Konstruktion aus einem
+rohen Dict ohne HTTP zusagt. Das ist ein sinnvoller Upstream-Vorschlag von uns —
+dann bekäme auch die Bibliothek einen WS-Pfad.
+
+### 5.3 Schichten
 
 ```
 ┌─ transport/socket.py ──────────────────────────────────────────┐
@@ -266,7 +317,7 @@ nur für den Regler, nicht pauschal.
 │  hash → sprechender Name, aus vendorten JSONs                  │
 │  · exakter Treffer model+fw                                    │
 │  · sonst: gleiches Modell, andere FW  → laden + Warnung        │
-│  · sonst: Raw-Modus (siehe 5.4)                                │
+│  · sonst: Raw-Modus (siehe 5.5)                                │
 └────────────────────────────────────────────────────────────────┘
 ┌─ coordinator.py ───────────────────────────────────────────────┐
 │  DataUpdateCoordinator(update_interval=None)                   │
@@ -276,12 +327,12 @@ nur für den Regler, nicht pauschal.
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.3 Was die Befunde aus §3 löst
+### 5.4 Was die Befunde aus §3 löst
 
 | Befund | Lösung |
 |---|---|
 | B1 Latenz | Push statt Poll. `update_interval=None`, `async_set_updated_data()` aus dem WS-Callback. |
-| B2 FW-Cliff | Dreistufiger Mapping-Fallback (5.4). Ein FW-Update degradiert die Namen, tötet nicht die Integration. |
+| B2 FW-Cliff | Dreistufiger Mapping-Fallback (5.5). Ein FW-Update degradiert die Namen, tötet nicht die Integration. |
 | B3 `visible:false` | Kanäle mit `visible: false` erzeugen **keine** Entity. Ändert sich `visible` zur Laufzeit (Sonde nachgerüstet), erscheint die Entity beim nächsten Reload — optional als Repair-Issue melden. |
 | B4 `alarm` | Pro Kanal mit `alarm`-Feld ein `binary_sensor` (device_class `problem`, `entity_registry_enabled_default=False`), plus `alarm` als Attribut am Hauptsensor. |
 | B5 Schwellen | `minT`/`maxT` als Attribute am Sensor und optional als `number`-Entities (Kategorie `config`, per Default deaktiviert). Kommen generisch aus dem Payload, kein Mapping-Eintrag nötig. |
@@ -289,7 +340,7 @@ nur für den Regler, nicht pauschal.
 | B8 Schreib-Overhead | Direkt `POST setInstantValues` mit dem Prefix+Key aus dem eigenen Snapshot. **Kein Vorab-GET.** Keine optimistische Anzeige nötig — der nächste Tick bestätigt in ~4 s. Bleibt die Bestätigung aus, wird der Wert zurückgesetzt und die Aktion als fehlgeschlagen gemeldet. |
 | B9 Unavailable-Flapping | Verfügbarkeit hängt an der WS-Liveness (letzter Frame < Watchdog-Fenster), nicht an einem Einzelabruf. Kurze Aussetzer (Spec: bis 16 s beobachtet) führen zu nichts. |
 
-### 5.4 Mapping-Fallback in drei Stufen
+### 5.5 Mapping-Fallback in drei Stufen
 
 1. **Exakt** `model_<MODEL>_FW<FW>.json` → volle sprechende Namen, alles wie gewohnt.
 2. **Modell passt, FW nicht** → nächstliegende FW-Datei desselben Modells laden.
@@ -305,7 +356,7 @@ Damit ist der Fall aus Issue #20 (neues Gerät, kein Mapping) kein Totalausfall 
 sondern ein Komfortverlust — und der Nutzer kann sofort Daten sehen und daraus ein
 Mapping beisteuern.
 
-### 5.5 Entprellung / Recorder
+### 5.6 Entprellung / Recorder
 
 Das ist bei 4,2 s **die** kritische Stelle. Bei ~40 Entities und einem Write pro Tick
 wären das ~9,5 State-Writes/s. HA feuert bei jedem `async_write_ha_state()` ein
@@ -329,7 +380,7 @@ Relevanzkriterium pro Kanal:
 
 Das ergibt für pH/ORP realistisch wenige Writes pro Minute statt 14/Minute.
 
-### 5.6 Setup-Ablauf
+### 5.7 Setup-Ablauf
 
 ```
 config_flow: Host eingeben
@@ -348,7 +399,7 @@ DHCP-Discovery (`hostname: kommspot`) lässt sich von der Core-Integration über
 Achtung: läuft beides parallel, konkurrieren die Flows um dasselbe Gerät — für die
 Testphase eine bewusste Entscheidung, im Zielbild wird die Core-Integration deaktiviert.
 
-### 5.7 Diagnostics
+### 5.8 Diagnostics
 
 `diagnostics.py` soll den **kompletten letzten Roh-Snapshot** ausgeben (Serial und
 WLAN-Daten redigiert), dazu Tick-Statistik: Frames/Minute, verpasste Ticks,
