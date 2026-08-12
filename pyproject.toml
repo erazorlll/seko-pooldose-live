@@ -1,0 +1,20 @@
+[project]
+name = "pooldose-live"
+version = "0.1.0"
+description = "Standalone Transport-/Decoder-/Mapping-Schicht für den lokalen SEKO-PoolDose-WebSocket (P1, ohne Home Assistant)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["aiohttp"]
+
+[project.scripts]
+pooldose-live-probe = "pooldose_live.probe:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pooldose_live = ["mappings/*.json"]

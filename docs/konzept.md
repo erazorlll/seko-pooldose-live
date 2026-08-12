@@ -465,12 +465,12 @@ kein Argument mehr gegen die Dauerverbindung als Kernidee.
 
 | Phase | Inhalt | Ergebnis |
 |---|---|---|
-| **P0** | Standalone-Logger: WS mitschneiden, Ticks/Lücken/Reconnects zählen, Snapshots als JSONL | Datenbasis + Messungen aus §8 |
-| **P1** | Transport + Decoder + Mapping-Loader, ohne HA | `python -m pooldose_live.probe --host …` zeigt aufgelöste Kanäle |
+| **P0** ✅ | Standalone-Logger: WS mitschneiden, Ticks/Lücken/Reconnects zählen, Snapshots als JSONL | Datenbasis + Messungen aus §8, inkl. HTTP-Basislinie (§8.3) |
+| **P1** ✅ | Transport + Decoder + Mapping-Loader, ohne HA — inkl. Raw-Modus + FW-Fallback (vorgezogen aus P5, waren zum Testen des Loaders ohnehin nötig) | `python -m pooldose_live.probe --host …` zeigt aufgelöste Kanäle. Paket `src/pooldose_live/` |
 | **P2** | HA-Skelett: manifest, config_flow, coordinator, `sensor` + `binary_sensor`, read-only | Erste Live-Werte in HA, parallel zur Core-Integration |
 | **P3** | Entprellung, Verfügbarkeitslogik, Diagnostics | Recorder-tauglich, alltagstauglich |
 | **P4** | Schreiben: `number`, `select`, `switch` über HTTP `setInstantValues` | Funktionsgleichstand mit Core |
-| **P5** | Raw-Modus + FW-Fallback, Repair-Issues, Übersetzungen (de/en) | Kein FW-Cliff mehr |
+| **P5** | Repair-Issues bei FW-Fallback, Übersetzungen (de/en) | Restliche Punkte, Raw-Modus/FW-Fallback selbst bereits in P1 erledigt |
 | **P6** | HACS-Konformität: `hacs.json`, `version` im Manifest, Release-Tags, README | Installierbar über HACS |
 | **P7** | Optional: WS-Schreibformat erforschen — **getrennt, mit Bedacht, nicht am Produktivgerät** | offen |
 
@@ -615,13 +615,41 @@ quo, eher besser (Push-Stille statt aktiv angefragter Stale-Daten). Der in §5.3
 bereits vorgesehene themenspezifische Staleness-Check auf `instant_values` bleibt
 so oder so Pflicht, unabhängig von der Ursache.
 
+### 8.4 Standby-Hypothese geprüft (2026-08-13) — erklärt einen Teil, nicht das Muster aus §8.2
+
+Naheliegende Vermutung während der P1-Entwicklung: Läuft keine Umwälzung, kann das
+Gerät pH/ORP nicht valide messen und pausiert deshalb `instant_values`. Konkret
+geprüft, mit gemischtem Ergebnis.
+
+**Live bestätigt:** Der Kanal `alarm_system_standby` (`w_1fai1n09b`, bereits im
+Mapping als `binary_sensor`) stand zum Prüfzeitpunkt auf `true` — passend zur
+zeitgleich beobachteten, mehrminütigen `instant_values`-Stille im laufenden
+P1-Probe-Test. Nutzer-Klarstellung: Der Standby wurde in diesem Fall **nicht** von
+der Geräte-eigenen Durchfluss-Logik ausgelöst, sondern von einer eigenen
+HA-Automatisierung, die die Anlage aktiv in Standby versetzt. `alarm_system_standby`
+ist also (mindestens auch) fremdgesteuert, kein rein autonomes Signal des Geräts.
+
+**Historisch widerlegt:** Systematischer Abgleich aller 86 Lücken > 60 s aus der
+11h-Messung (§8.2) gegen denselben Kanal: **0 von 86** Lücken fielen mit
+`alarm_system_standby = true` zusammen. Das Flag war in der gesamten 11h-Aufzeichnung
+nur für ~67 s aktiv (9 von 2646 Zyklen), außerhalb jeder gefundenen Lücke.
+
+**Schluss:** Standby ist ein reales, jetzt bestätigtes Phänomen, das
+`instant_values` nachvollziehbar pausieren lässt — aber er erklärt **nicht** das in
+§8.2 charakterisierte Muster. Das sind zwei getrennte Ursachen: gezielter
+(fremdgesteuerter) Standby einerseits, und die weiterhin ungeklärten, häufigeren
+Aussetzer andererseits. Für die Architektur heißt das: `alarm_system_standby` sollte
+in P3 (Verfügbarkeitslogik) als Kontext-Signal mitgeführt werden — „stale, weil
+Standby aktiv" ist eine andere Situation für den Nutzer als „stale, Ursache
+unbekannt" —, löst das eigentliche Rätsel aus §8.2 aber nicht auf.
+
 ---
 
 ## 9. Risiken
 
 | Risiko | Wirkung | Gegenmaßnahme |
 |---|---|---|
-| `instant_values` setzt minutenlang aus, Verbindung bleibt intakt (§8.2: 86× in 11h WS, ~30 %; §8.3: auch ganz ohne WS-Client ~65 %, also geräteinhärent) | HA zeigt veraltete Werte als "verfügbar" an, ohne dass ein reiner Verbindungs-Watchdog das merkt | Zweiter Staleness-Check speziell auf `instant_values`-Zeitstempel, unabhängig vom Frame-Watchdog; Entities nach konfigurierbarer Frist als unavailable markieren |
+| `instant_values` setzt minutenlang aus, Verbindung bleibt intakt (§8.2: 86× in 11h WS, ~30 %; §8.3: auch ganz ohne WS-Client ~65 %, also geräteinhärent). Standby (§8.4) erklärt nachweislich nur einen Teil der Fälle (0/86 historische Lücken korrelieren) | HA zeigt veraltete Werte als "verfügbar" an, ohne dass ein reiner Verbindungs-Watchdog das merkt | Zweiter Staleness-Check speziell auf `instant_values`-Zeitstempel, unabhängig vom Frame-Watchdog; `alarm_system_standby` als Kontext mitführen (§8.4); Entities nach konfigurierbarer Frist als unavailable markieren |
 | WiFi-Modul kommt mit Dauerverbindung nicht klar | Tick-Aussetzer, Reboots | *Entschärft* — §8.3 zeigt das Phänomen auch ganz ohne WS-Verbindung, spricht gegen Verschärfung durch Dauerverbindung. Watchdog + Backoff bleiben trotzdem; harte Ein-Verbindungs-Regel |
 | Recorder-DB läuft voll | HA wird langsam | Entprellung ab P3, nicht später; Default-Heartbeat konservativ |
 | Reassembly liefert gemischte Zyklen | falsche Werte | `offset==1` leert den Puffer; nur bei `offset==total` publizieren; Zyklus-Zähler in Diagnostics |
