@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up SEKO PoolDose (Live)",
+        "description": "IP address or hostname of the PoolDose. Only checks that the local WebSocket (port 1334) is reachable - does not wait for live data, since the device can legitimately stay silent for several minutes at a time.",
+        "data": {
+          "host": "Host"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the WebSocket on port 1334. Check the IP/hostname."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  }
+}

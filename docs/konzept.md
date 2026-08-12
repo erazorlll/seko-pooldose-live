@@ -394,20 +394,39 @@ Relevanzkriterium pro Kanal:
 
 Das ergibt für pH/ORP realistisch wenige Writes pro Minute statt 14/Minute.
 
-### 5.7 Setup-Ablauf
+### 5.7 Setup-Ablauf — überarbeitet in P2 (2026-08-13)
+
+Der ursprüngliche Plan hier ging von "Timeout 30 s, deckt die beobachtete längste
+Lücke von 16 s ab" aus — das war der Stand vor P0. Die 11h-Messung (§8.2) und die
+HTTP-Basislinie (§8.3) haben seither gezeigt: reale Aussetzer reichen bis 9,7
+Minuten, treten in 30–70 % der Zeit auf. Ein Setup-Schritt, der auf einen
+vollständigen Zyklus wartet, würde regelmäßig grundlos fehlschlagen oder minutenlang
+hängen — genau das haben wir beim P1-Live-Test selbst erlebt (§8.4). Entsprechend
+umgebaut, in P2 implementiert und gegen das echte Gerät verifiziert (auch während
+die Anlage im Standby war):
 
 ```
 config_flow: Host eingeben
-  → einmalig HTTP: /api/v1/debug/config, /network/wifi/getStation, /network/info/getInfo
-      (Name, Seriennummer, FW_REL, FW_CODE, MODEL_ID, IP → Device-Registry)
-  → unique_id = Seriennummer
-  → Testverbindung ws://<host>:1334, auf einen vollständigen instant_values-Zyklus warten
-      (Timeout 30 s — deckt die beobachtete längste Lücke von 16 s ab)
-  → Entry anlegen
+  → Testverbindung ws://<host>:1334 - nur der WS-Handshake wird geprüft
+      (Timeout 10 s), es wird NICHT auf einen instant_values-Zyklus gewartet
+  → unique_id = Host (vorläufig, siehe unten)
+  → Entry anlegen, Setup kehrt sofort zurück
 
 Laufzeit: ausschließlich WebSocket. Kein periodischer HTTP-Verkehr.
-HTTP nur noch bei Schreibzugriffen und beim Reload.
+HTTP nur noch bei Schreibzugriffen (P4).
+
+Entities entstehen dynamisch, sobald der erste instant_values-Zyklus eintrifft -
+nicht beim Setup selbst. Modell/FW/Kanalnamen kommen wie in §4 beschrieben aus den
+Daten-Keys, kein HTTP-Call nötig.
 ```
+
+**Bewusste Vereinfachung, noch offen:** `unique_id` ist vorläufig der Host, nicht die
+Seriennummer — die steht laut Spec erst nach dem ersten Zyklus fest (Teil des
+devicedata-Keys), der hier nicht abgewartet wird. Eine spätere Migration auf die
+Seriennummer (sobald bekannt) ist ein offener Folgeschritt, kein P2-Scope. Nachteil:
+ändert sich die IP des Geräts, entsteht aktuell ein zweiter Config-Entry statt einer
+Aktualisierung — beim offiziellen Vorbild löst `async_step_reconfigure` das über die
+stabile Seriennummer.
 
 DHCP-Discovery (`hostname: kommspot`) lässt sich von der Core-Integration übernehmen.
 Achtung: läuft beides parallel, konkurrieren die Flows um dasselbe Gerät — für die
@@ -467,7 +486,7 @@ kein Argument mehr gegen die Dauerverbindung als Kernidee.
 |---|---|---|
 | **P0** ✅ | Standalone-Logger: WS mitschneiden, Ticks/Lücken/Reconnects zählen, Snapshots als JSONL | Datenbasis + Messungen aus §8, inkl. HTTP-Basislinie (§8.3) |
 | **P1** ✅ | Transport + Decoder + Mapping-Loader, ohne HA — inkl. Raw-Modus + FW-Fallback (vorgezogen aus P5, waren zum Testen des Loaders ohnehin nötig) | `python -m pooldose_live.probe --host …` zeigt aufgelöste Kanäle. Paket `src/pooldose_live/` |
-| **P2** | HA-Skelett: manifest, config_flow, coordinator, `sensor` + `binary_sensor`, read-only | Erste Live-Werte in HA, parallel zur Core-Integration |
+| **P2** ✅ | HA-Skelett: manifest, config_flow, coordinator, `sensor` + `binary_sensor`, read-only. Setup-Ablauf gegenüber der ursprünglichen Planung überarbeitet (§5.7) | `custom_components/pooldose_live/`, parallel zur Core-Integration installierbar |
 | **P3** | Entprellung, Verfügbarkeitslogik, Diagnostics | Recorder-tauglich, alltagstauglich |
 | **P4** | Schreiben: `number`, `select`, `switch` über HTTP `setInstantValues` | Funktionsgleichstand mit Core |
 | **P5** | Repair-Issues bei FW-Fallback, Übersetzungen (de/en) | Restliche Punkte, Raw-Modus/FW-Fallback selbst bereits in P1 erledigt |

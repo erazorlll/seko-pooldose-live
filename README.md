@@ -5,8 +5,9 @@ WebSocket** des Geräts statt HTTP-Polling.
 
 Zielgerät: SEKO PoolDose Double Spa (`PDPR1H04AW100`, FW `539292`).
 
-Status: **P1 — Transport/Decoder/Mapping-Bibliothek, ohne Home Assistant.**
-P0 (Messungen, Architekturentscheidungen) ist abgeschlossen, siehe
+Status: **P2 — erstes HA-Skelett (read-only), parallel zur Core-Integration
+installierbar.** P0 (Messungen, Architekturentscheidungen) und P1
+(Transport/Decoder/Mapping-Bibliothek) sind abgeschlossen, siehe
 [docs/konzept.md](docs/konzept.md).
 
 ## Warum
@@ -39,7 +40,34 @@ danach live jede Wertänderung. `--once` beendet nach der ersten Tabelle,
 | `mappings/` | Vendorte Mapping-Tabellen aus `python-pooldose` (MIT), siehe `ATTRIBUTION.md` |
 | `probe.py` | CLI-Entry-Point für P1 |
 
-Noch keine HA-Integration (kommt in P2) und noch kein Schreibzugriff (P4).
+Noch kein Schreibzugriff (P4).
+
+## HA-Integration `custom_components/pooldose_live/` (P2)
+
+Read-only: `sensor` + `binary_sensor`, dynamisch aus den aufgelösten Kanälen
+erzeugt (nicht aus einer festen Tabelle wie die Core-Integration — die
+Kanalmenge steht erst zur Laufzeit fest, je nach Mapping-Treffer oder
+Raw-Fallback). `visible: false`-Kanäle erzeugen keine Entity (Konzept B3),
+das `alarm`-Flag landet als Attribut am Sensor (Konzept B4).
+
+**Bekannte Lücke:** `manifest.json` hat `"requirements": []` — das Paket
+`pooldose_live` (siehe oben) muss aktuell im selben Python-Environment wie
+Home Assistant installiert sein (`pip install -e .` in diesem Repo, im
+venv von HA). Echte Distribution (PyPI-Release oder Vendoring in die
+Komponente) ist P6-Scope.
+
+**Setup wartet nicht auf Live-Daten:** Der Config Flow prüft nur, ob der
+WebSocket-Port antwortet (10 s Timeout) — er wartet nicht auf einen
+vollständigen `instant_values`-Zyklus. Das Gerät kann laut Konzept §8.2/§8.3
+legitim mehrere Minuten schweigen; ein Setup, das darauf wartet, würde
+regelmäßig grundlos fehlschlagen. Details in Konzept §5.7.
+
+Tests: `tests/test_p2_manual.py` — kein regulärer `pytest`-Lauf, da
+`pytest-homeassistant-custom-component` unter Windows an `homeassistant.runner`
+(braucht `fcntl`, Unix-only) scheitert. Stattdessen ein eigenständiges Skript
+mit echten HA-Kernklassen (`python tests/test_p2_manual.py`). Auf einer
+echten (Linux-)HA-Instanz sollte das durch reguläre pytest-Fixtures
+ersetzt/ergänzt werden.
 
 ## Dokumente
 
