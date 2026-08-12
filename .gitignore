@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Mitschnitte (P0) — enthalten Rohdaten des Geräts, gehören nicht ins Repo
+*.jsonl
+*.jsonl.gz
+recordings/
