@@ -435,13 +435,16 @@ in Issue #20 entstanden sind — dann ohne CLI-Gefummel.
 - Keine Phantom-Sensoren mehr für nicht bestückte Kanäle (B3).
 - Kurze Aussetzer führen nicht mehr zu „alles unavailable" (B9).
 
-**Plausibel, aber unbewiesen — und durch die Messung eher in Frage gestellt:**
+**Plausibel, aber unbewiesen:**
 - Geringere Last auf dem Dosierregler. Argument: Modbus läuft im Eigentakt.
   Das ist eine Herleitung aus `modbus_status: "on"`, keine Messung.
-- „Ein Listener kostet das WiFi-Modul nichts, was der Regler-Kommunikation schadet."
-  Die 11h-Messung zeigt wiederkehrende, mehrminütige `instant_values`-Aussetzer bei
-  intakter Verbindung (§8.2) — ob die mit unserem eigenen Zuhören zusammenhängen, ist
-  die wichtigste offene Frage (§10).
+
+**Nachträglich gestützt durch §8.3:** Die wiederkehrenden, mehrminütigen
+`instant_values`-Aussetzer bei intakter Verbindung (§8.2) traten in einer 108-Minuten-
+Basislinie **ganz ohne WS-Client genauso, eher stärker** auf (§8.3) — sprechen also für
+einen geräteinhärenten Effekt, nicht für einen durch unser Zuhören verursachten. Keine
+strenge Widerlegung des Gegenteils (andere Tageszeit, kein Mirror-Port-Test), aber
+kein Argument mehr gegen die Dauerverbindung als Kernidee.
 
 **Kosten, ehrlich:**
 - Dauerhaft offene TCP-Verbindung zum Gerät.
@@ -484,9 +487,9 @@ von diesem Projekt — sie helfen auch allen, die beim Polling bleiben.
 
 | # | Frage | Status |
 |---|---|---|
-| 1 | **Sendet das Gerät ohne Zuhörer?** Entscheidet, ob „gerätefreundlich" hält — und ob die in 8.2 gefundenen Aussetzer selbstverursacht sind. | **in Arbeit** — `tools/http_baseline.py`, 4h-Lauf gestartet (Näherung ohne Mirror-Port, siehe `tools/README.md`) |
-| 2 | **Tick-Ausfallrate** bei 0/1/2 gleichzeitigen Clients. Die Spec hat 16/24 Zyklen bei einem Client gesehen — reproduzierbar? | **beantwortet** für 1 Client über 11h, siehe 8.2. Bei 0/2 Clients offen — braucht Frage 1 zuerst |
-| 3 | **Antwortzeit von `GET /`** mit und ohne aktiven WS-Listener. Zeigt, ob der Listener den HTTP-Server ausbremst. | teilweise: HTTP-Latenz mit 1 Listener gemessen (8.2), Vergleich ohne Listener fehlt |
+| 1 | **Sendet das Gerät ohne Zuhörer?** Entscheidet, ob „gerätefreundlich" hält — und ob die in 8.2 gefundenen Aussetzer selbstverursacht sind. | **beantwortet (Näherung)** — HTTP-Basislinie ohne WS-Client zeigt das gleiche Phänomen, eher stärker. Siehe 8.3. Echte Bestätigung ohne jeden Client bräuchte einen Mirror-Port |
+| 2 | **Tick-Ausfallrate** bei 0/1/2 gleichzeitigen Clients. Die Spec hat 16/24 Zyklen bei einem Client gesehen — reproduzierbar? | **beantwortet** für 1 Client über 11h (8.2) und für "0 WS-Clients" per HTTP-Näherung (8.3). Bei 2 Clients offen |
+| 3 | **Antwortzeit von `GET /`** mit und ohne aktiven WS-Listener. Zeigt, ob der Listener den HTTP-Server ausbremst. | weiter offen — 8.2 maß eine statische Datei (`params.js`, ~230ms), 8.3 den echten Datenendpunkt (`getInstantValues`, ~455ms). Unterschiedliche Endpunkte, kein fairer Vergleich |
 | 4 | **Verhalten bei Reconnect:** kommt sofort ein `offset:1`-Frame oder mitten im Zyklus? | **beantwortet**, siehe 8.2 |
 | 5 | **Ändert sich `visible` zur Laufzeit?** Über 24h beobachten. | über 11h nicht beobachtet (siehe 8.2) — 24h-Wiederholung sinnvoll, aber nicht mehr oberste Priorität |
 | 6 | **Kommen Werte außerhalb des Ticks**, wenn man am Gerät etwas verstellt? | offen |
@@ -564,14 +567,62 @@ bei einem 11h-Mitschnitt mit mehreren Reconnects zu einem falschen 0,67-s-Grundt
 und einer irreführenden „95,5 % ausgefallen"-Zahl führte. Beide Zahlen aus diesem
 Abschnitt stammen vom korrigierten Stand.
 
+### 8.3 Ergebnisse: HTTP-Basislinie ohne WS-Client (2026-08-12, 22:08–23:57 Uhr)
+
+Werkzeug: [`tools/http_baseline.py`](../tools/http_baseline.py). Beantwortet die in
+§10 als wichtigste offene Frage markierte Kausalitätsfrage: Sind die in 8.2
+gefundenen `instant_values`-Aussetzer durch unser eigenes WS-Zuhören verursacht?
+
+**Methode:** Ausschließlich `POST /api/v1/DWI/getInstantValues` gepollt, alle 20 s,
+108,7 Minuten (vorzeitig gestoppt — geplant waren 4h, die Datenlage war nach ~1,5h
+bereits eindeutig). Port 1334 (WebSocket) in diesem Lauf zu keinem Zeitpunkt
+angefasst. „Eingefroren" = Hash über alle 52 sichtbaren `current`-Werte bleibt über
+mehrere Polls identisch — nicht nur ein einzelner Kanal, der komplette Zustand.
+
+| | HTTP-only, 108,7 Min (8.3) | WS, 11h/662 Min (8.2) |
+|---|---|---|
+| Ereignisse > 60 s | 24 | 86 |
+| Anteil eingefrorener Zeit | **65,0 %** | 30,1 % |
+| Rate | 1 alle 4,5 Min | 1 alle 7,7 Min |
+| Längste Einzelserie | **580 s (9,7 Min)** | 393 s (6,5 Min) |
+
+**Befund: Ohne jeden WS-Client ist die Ausfallrate mindestens so hoch wie mit einem
+— tendenziell höher, mit einer längeren Einzelserie als alles in der WS-Messung.**
+Wäre unser WS-Zuhören der Stressor, müsste die Bedingung ganz ohne WS-Client ruhiger
+sein. Das Gegenteil ist der Fall.
+
+**Einschränkungen, ehrlich benannt:**
+- Andere Tageszeit (nachts statt vormittags/nachmittags) und damit ein anderer
+  Betriebszustand der Anlage — mögliche Störgröße, unabhängig vom Transportweg.
+- Kein echter Zeitreihenvergleich am selben Tag/derselben Uhrzeit.
+- Kein Beweis für „niemand ist verbunden" im strengen Sinn — HTTP-Polling ist auch
+  Last, nur andere Art und geringere Frequenz als ein offener WS-Socket. Der
+  einzige wirklich zweifelsfreie Test (Mirror-Port am Switch/Router, Traffic
+  passiv beobachten) steht weiterhin aus.
+- Deutlich kürzere Beobachtungsdauer (108,7 Min vs. 662 Min).
+
+**Trotzdem eine belastbare Näherung:** Die Zahlen waren nach den ersten 17 Minuten
+noch instabil (86 % eingefroren) und haben sich über die volle Laufzeit bei ~65–69 %
+eingependelt, nicht weiter in Richtung der WS-Zahlen bewegt. Kombiniert mit dem in
+§8.2 beschriebenen Mechanismus — WS bleibt bei fehlenden neuen Daten schlicht still
+(Push), während HTTP auf jede Anfrage antworten muss und dabei den letzten bekannten
+Stand zurückgibt (Pull) — ergibt sich ein in sich stimmiges Bild: **eine interne
+`instant_values`-Generierung, die unabhängig vom Client periodisch pausiert.**
+
+**Praktische Konsequenz:** Frage 1 gilt als beantwortet genug, um die Architektur
+nicht zu ändern — eine dauerhafte WS-Verbindung ist nicht schlechter als der Status
+quo, eher besser (Push-Stille statt aktiv angefragter Stale-Daten). Der in §5.3/§9
+bereits vorgesehene themenspezifische Staleness-Check auf `instant_values` bleibt
+so oder so Pflicht, unabhängig von der Ursache.
+
 ---
 
 ## 9. Risiken
 
 | Risiko | Wirkung | Gegenmaßnahme |
 |---|---|---|
-| `instant_values` setzt minutenlang aus, Verbindung bleibt intakt (§8.2, gemessen: 86× in 11h, ~30 % der Zeit) | HA zeigt veraltete Werte als "verfügbar" an, ohne dass ein reiner Verbindungs-Watchdog das merkt | Zweiter Staleness-Check speziell auf `instant_values`-Zeitstempel, unabhängig vom Frame-Watchdog; Entities nach konfigurierbarer Frist als unavailable markieren |
-| WiFi-Modul kommt mit Dauerverbindung nicht klar (mögliche Ursache des obigen Risikos) | Tick-Aussetzer, Reboots | P0-Messung Frage 1 (ohne Zuhörer messen, um Selbstverursachung auszuschließen) vor dem Ausbau; Watchdog + Backoff; harte Ein-Verbindungs-Regel |
+| `instant_values` setzt minutenlang aus, Verbindung bleibt intakt (§8.2: 86× in 11h WS, ~30 %; §8.3: auch ganz ohne WS-Client ~65 %, also geräteinhärent) | HA zeigt veraltete Werte als "verfügbar" an, ohne dass ein reiner Verbindungs-Watchdog das merkt | Zweiter Staleness-Check speziell auf `instant_values`-Zeitstempel, unabhängig vom Frame-Watchdog; Entities nach konfigurierbarer Frist als unavailable markieren |
+| WiFi-Modul kommt mit Dauerverbindung nicht klar | Tick-Aussetzer, Reboots | *Entschärft* — §8.3 zeigt das Phänomen auch ganz ohne WS-Verbindung, spricht gegen Verschärfung durch Dauerverbindung. Watchdog + Backoff bleiben trotzdem; harte Ein-Verbindungs-Regel |
 | Recorder-DB läuft voll | HA wird langsam | Entprellung ab P3, nicht später; Default-Heartbeat konservativ |
 | Reassembly liefert gemischte Zyklen | falsche Werte | `offset==1` leert den Puffer; nur bei `offset==total` publizieren; Zyklus-Zähler in Diagnostics |
 | Beide Integrationen parallel aktiv | 2 Clients + Polling, doppelte Entities | Getrennte Domain macht es sichtbar; README weist auf Deaktivierung hin |
@@ -582,13 +633,13 @@ Abschnitt stammen vom korrigierten Stand.
 
 ## 10. Offene Punkte
 
-- **Verursacht unser eigenes Zuhören die `instant_values`-Aussetzer aus §8.2, oder
-  passiert das auch ohne Client?** Die wichtigste offene Frage nach der ersten
-  Messung. Lässt sich nur durch eine Vergleichsmessung ganz ohne WS-Verbindung
-  klären (P0-Frage 1, z. B. Traffic-Mitschnitt am Switch/Router). Falls
-  selbstverursacht, spricht das gegen eine dauerhaft offene Verbindung und für ein
-  leichteres Muster (z. B. periodisches kurzes Verbinden statt einer Dauerverbindung)
-  — eine mögliche Kurskorrektur an der Kernidee dieses Konzepts.
+- ~~Verursacht unser eigenes Zuhören die `instant_values`-Aussetzer aus §8.2, oder
+  passiert das auch ohne Client?~~ **Geklärt (Näherung), siehe §8.3:** Eine
+  108-minütige HTTP-only-Basislinie ganz ohne WS-Verbindung zeigt das gleiche
+  Phänomen — tendenziell sogar häufiger und mit einer längeren Einzelserie (9,7 Min)
+  als in den 11h WS-Daten. Spricht für geräteinhärent, nicht selbstverursacht. Kein
+  strenger Beweis (kein Mirror-Port-Test, andere Tageszeit als die WS-Messung), aber
+  stabil genug, um an der Kernidee (Dauerverbindung) festzuhalten.
 - WS-Schreibformat: unbekannt, bewusst nicht getestet (bleibt so bis P7).
 - Topics `wdp_status`, `wifi_status` inhaltlich unklar — `wdp_status.connection`
   (Cloud) und `wifi_station.rssi` sind aus `python-pooldose` bekannt und lassen sich
