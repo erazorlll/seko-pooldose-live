@@ -484,7 +484,7 @@ von diesem Projekt — sie helfen auch allen, die beim Polling bleiben.
 
 | # | Frage | Status |
 |---|---|---|
-| 1 | **Sendet das Gerät ohne Zuhörer?** Traffic am Switch/Router beobachten, WS-Client aus. Entscheidet, ob „gerätefreundlich" hält — und ob die in 8.2 gefundenen Aussetzer selbstverursacht sind. | **offen, jetzt Priorität 1** (siehe 8.2) |
+| 1 | **Sendet das Gerät ohne Zuhörer?** Entscheidet, ob „gerätefreundlich" hält — und ob die in 8.2 gefundenen Aussetzer selbstverursacht sind. | **in Arbeit** — `tools/http_baseline.py`, 4h-Lauf gestartet (Näherung ohne Mirror-Port, siehe `tools/README.md`) |
 | 2 | **Tick-Ausfallrate** bei 0/1/2 gleichzeitigen Clients. Die Spec hat 16/24 Zyklen bei einem Client gesehen — reproduzierbar? | **beantwortet** für 1 Client über 11h, siehe 8.2. Bei 0/2 Clients offen — braucht Frage 1 zuerst |
 | 3 | **Antwortzeit von `GET /`** mit und ohne aktiven WS-Listener. Zeigt, ob der Listener den HTTP-Server ausbremst. | teilweise: HTTP-Latenz mit 1 Listener gemessen (8.2), Vergleich ohne Listener fehlt |
 | 4 | **Verhalten bei Reconnect:** kommt sofort ein `offset:1`-Frame oder mitten im Zyklus? | **beantwortet**, siehe 8.2 |

@@ -46,9 +46,30 @@ Konzept 5.6).
 
 | Frage | Wie hier beantwortet |
 |---|---|
-| Sendet das Gerät ohne Zuhörer? | Nicht per Skript prüfbar — separat am Switch/Router beobachten |
+| Sendet das Gerät ohne Zuhörer? | Nicht direkt prüfbar (kein Mirror-Port). Näherung über `http_baseline.py`, siehe unten |
 | Tick-Ausfallrate bei 0/1/2 Clients | `record` parallel mit `--http-probe` je einmal starten, `Slot-Histogramm` im Bericht vergleichen |
 | HTTP-Antwortzeit mit/ohne WS-Listener | `--http-probe` mit und ohne parallel laufenden zweiten `record`-Prozess |
 | Reconnect-Verhalten (offset:1 sofort?) | `--watchdog` künstlich niedrig setzen, `Zyklen abgebrochen` beobachten |
 | Ändert sich `visible` zur Laufzeit? | Langer Mitschnitt (≥24h), `visible gewechselt` im Bericht |
 | Kommen Werte außerhalb des Ticks? | Während der Aufzeichnung am Gerät etwas verstellen, `frame_intervals` prüfen |
+
+Ergebnisse des ersten 11h-Laufs: [`docs/konzept.md` §8.2](../docs/konzept.md#82-ergebnisse-11h-mitschnitt-2026-08-12-1-client).
+
+## tools/http_baseline.py — Vergleichsmessung ohne WS-Client (Konzept §10)
+
+Beantwortet die wichtigste offene Frage nach der 11h-WS-Messung: sind die dort
+gefundenen mehrminütigen `instant_values`-Aussetzer durch unseren eigenen
+WS-Zuhörer verursacht, oder geräteinhärent? Pollt ausschließlich über die
+HTTP-API (`POST /api/v1/DWI/getInstantValues`), Port 1334 bleibt unberührt.
+
+```bash
+python tools/http_baseline.py record --host 192.168.0.74 --interval 20 \
+    --duration 14400 --out recordings/http_baseline.jsonl.gz
+python tools/http_baseline.py report recordings/http_baseline.jsonl.gz
+```
+
+Erkennt "eingefrorene Serien": aufeinanderfolgende Polls mit identischem
+Hash über alle sichtbaren `current`-Werte. Bei kurzen Intervallen (< 2×
+Gerätetakt, ~4,2s) sind kurze Serien durch Polling/Takt-Aliasing zu erwarten
+und kein Befund — erst Serien in der Größenordnung von Minuten sind
+aussagekräftig im Vergleich zu den WS-Aussetzern (bis 393s, siehe Konzept §8.2).
