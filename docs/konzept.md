@@ -229,6 +229,16 @@ Modul-Last. Das lässt sich messen (Abschnitt 8) und sollte vor dem Rollout gekl
 **Request-Spitzen** auf dem HTTP-Server des Geräts. „Schont das Gerät" gilt belegbar
 nur für den Regler, nicht pauschal.
 
+**„Faktor ~143 in der Aktualität" — nach der ersten 11h-Messung zu optimistisch.**
+Das war eine theoretische Rechnung aus dem nominalen 4,2-s-Tick. Ein 11-stündiger
+Mitschnitt (§8.2) zeigt zwei Dinge: Der nominale volle Zyklus (beide Chunks) liegt
+tatsächlich bei ~4,0–4,2 s wie in der Spec beschrieben — aber `instant_values` fällt
+während bestehender Verbindung deutlich häufiger aus, als der kurze Spec-Mitschnitt
+nahelegte, und zusätzlich gibt es wiederkehrende mehrminütige Totalaussetzer bei
+sonst intakter Verbindung. Die reale mittlere Zykluszeit über 11h lag bei ~14,9 s.
+Der Faktor gegenüber 600 s bleibt groß (~40×), ist aber nicht mit dem theoretischen
+Wert von ~143× zu verwechseln. Details und Rohzahlen in §8.2.
+
 ---
 
 ## 5. Konzept der neuen Integration
@@ -300,8 +310,12 @@ dann bekäme auch die Bibliothek einen WS-Pfad.
 ┌─ transport/socket.py ──────────────────────────────────────────┐
 │  eine ws://<host>:1334 Verbindung                              │
 │  · Reassembly nach progressInfo (offset==1 → Puffer leeren)    │
-│  · Watchdog 30 s ohne Frame → Reconnect                        │
-│  · Backoff 2 s → 60 s, exponentiell                            │
+│  · Verbindungs-Watchdog 30 s ohne JEDEN Frame → Reconnect       │
+│  · Staleness-Watchdog separat auf instant_values (§8.2/§9):     │
+│    wifi_station/time laufen weiter, auch wenn instant_values    │
+│    minutenlang aussetzt - ein reiner Frame-Watchdog reicht      │
+│    nicht, um das zu erkennen                                    │
+│  · Backoff 2 s → 60 s, exponentiell                             │
 │  · unbekannte Topics werden verworfen, nicht geloggt-geflutet  │
 │  → liefert vollständige Snapshots als Callback                 │
 └────────────────────────────────────────────────────────────────┘
@@ -410,25 +424,37 @@ in Issue #20 entstanden sind — dann ohne CLI-Gefummel.
 
 ## 6. Vorteile gegenüber heute — nüchtern
 
-**Belegt:**
-- Aktualität 4,2 s statt 600 s (Faktor ~143). Direkt aus dem Tick der Spec.
+**Belegt (aktualisiert nach 11h-Messung, §8.2):**
+- Aktualität: reale mittlere Zykluszeit ~14,9 s statt 600 s (Faktor ~40, nicht der
+  theoretische ~143 aus dem nominalen 4,2-s-Tick — Details in §4 und §8.2).
 - Kein periodischer HTTP-Request mehr (heute 144/Tag), keine Request-Spitzen auf dem Webserver des Geräts.
 - Schreibvorgänge: 1 HTTP-Request statt 2, und Bestätigung nach ~4 s statt bis zu 600 s.
 - Ein FW-Update legt die Integration nicht mehr lahm (B2).
-- ~19 Werte mehr aus demselben Datenstrom (B6/B7), plus `alarm` und `minT/maxT` (B4/B5).
+- ~19 Werte mehr aus demselben Datenstrom (B6/B7), plus `alarm` und `minT/maxT` (B4/B5) —
+  `alarm` ist kein Nischenfall: der ORP-Kanal allein wechselte in 11h 1.937-mal den Wert.
 - Keine Phantom-Sensoren mehr für nicht bestückte Kanäle (B3).
 - Kurze Aussetzer führen nicht mehr zu „alles unavailable" (B9).
 
-**Plausibel, aber unbewiesen:**
+**Plausibel, aber unbewiesen — und durch die Messung eher in Frage gestellt:**
 - Geringere Last auf dem Dosierregler. Argument: Modbus läuft im Eigentakt.
   Das ist eine Herleitung aus `modbus_status: "on"`, keine Messung.
+- „Ein Listener kostet das WiFi-Modul nichts, was der Regler-Kommunikation schadet."
+  Die 11h-Messung zeigt wiederkehrende, mehrminütige `instant_values`-Aussetzer bei
+  intakter Verbindung (§8.2) — ob die mit unserem eigenen Zuhören zusammenhängen, ist
+  die wichtigste offene Frage (§10).
 
 **Kosten, ehrlich:**
 - Dauerhaft offene TCP-Verbindung zum Gerät.
-- ~267 MB/Tag statt ~1,9 MB/Tag im LAN.
+- ~51 MB/Tag gemessen (Hochrechnung aus 11h, inkl. aller Topics) — deutlich weniger
+  als die anfängliche Worst-Case-Schätzung von ~267 MB/Tag, aber immer noch
+  ~27× mehr als der heutige HTTP-Poll (~1,9 MB/Tag).
 - Deutlich mehr Serialisierungsarbeit auf dem WiFi-Modul.
-- Entprellung ist Pflicht, nicht Kür — ohne sie ruiniert man die Recorder-DB.
+- Entprellung ist Pflicht, nicht Kür — ohne sie ruiniert man die Recorder-DB
+  (gemessen: 422.600 vs. 6.200 Writes/Tag, §8.2).
 - Web-UI-Tabs im Browser sind ab jetzt ein echter Störfaktor (Extra-Client).
+- **Neu:** `instant_values` kann trotz offener Verbindung für Minuten veraltet sein
+  (§8.2/§9) — die Integration braucht einen zusätzlichen Staleness-Check, den die
+  ursprüngliche Watchdog-Idee allein nicht abdeckt.
 
 ---
 
@@ -452,20 +478,91 @@ von diesem Projekt — sie helfen auch allen, die beim Polling bleiben.
 
 ---
 
-## 8. Zu messen, bevor wir bauen (P0)
+## 8. Messungen (P0)
 
-1. **Sendet das Gerät ohne Zuhörer?** Traffic am Switch/Router beobachten, WS-Client
-   aus. Entscheidet, ob „gerätefreundlich" hält.
-2. **Tick-Ausfallrate** bei 0 / 1 / 2 gleichzeitigen Clients, je 30 min.
-   Die Spec hat 16/24 Zyklen bei einem Client gesehen — reproduzierbar?
-3. **Antwortzeit von `GET /`** und `POST getInstantValues` mit und ohne aktiven
-   WS-Listener. Zeigt, ob der Listener den HTTP-Server ausbremst.
-4. **Verhalten bei Reconnect:** kommt sofort ein `offset:1`-Frame oder mitten im Zyklus?
-   Bestimmt, ob die Puffer-Regel reicht.
-5. **Ändert sich `visible` zur Laufzeit?** Über 24 h beobachten. Entscheidet, ob
-   Entity-Erzeugung nur beim Setup oder dynamisch laufen muss.
-6. **Kommen Werte außerhalb des Ticks**, wenn man am Gerät etwas verstellt?
-   Entscheidet, wie schnell Schreibbestätigungen realistisch sind.
+### 8.1 Fragenkatalog
+
+| # | Frage | Status |
+|---|---|---|
+| 1 | **Sendet das Gerät ohne Zuhörer?** Traffic am Switch/Router beobachten, WS-Client aus. Entscheidet, ob „gerätefreundlich" hält — und ob die in 8.2 gefundenen Aussetzer selbstverursacht sind. | **offen, jetzt Priorität 1** (siehe 8.2) |
+| 2 | **Tick-Ausfallrate** bei 0/1/2 gleichzeitigen Clients. Die Spec hat 16/24 Zyklen bei einem Client gesehen — reproduzierbar? | **beantwortet** für 1 Client über 11h, siehe 8.2. Bei 0/2 Clients offen — braucht Frage 1 zuerst |
+| 3 | **Antwortzeit von `GET /`** mit und ohne aktiven WS-Listener. Zeigt, ob der Listener den HTTP-Server ausbremst. | teilweise: HTTP-Latenz mit 1 Listener gemessen (8.2), Vergleich ohne Listener fehlt |
+| 4 | **Verhalten bei Reconnect:** kommt sofort ein `offset:1`-Frame oder mitten im Zyklus? | **beantwortet**, siehe 8.2 |
+| 5 | **Ändert sich `visible` zur Laufzeit?** Über 24h beobachten. | über 11h nicht beobachtet (siehe 8.2) — 24h-Wiederholung sinnvoll, aber nicht mehr oberste Priorität |
+| 6 | **Kommen Werte außerhalb des Ticks**, wenn man am Gerät etwas verstellt? | offen |
+
+### 8.2 Ergebnisse: 11h-Mitschnitt (2026-08-12, 1 Client)
+
+Werkzeug: [`tools/ws_probe.py`](../tools/ws_probe.py). Aufzeichnung 10:46–21:48 Uhr,
+39.744 s effektive Laufzeit, 10.186 Frames, 2.663 vollständige Zyklen, 8 Reconnects,
+0 Watchdog-Auslöser. Rohdaten liegen lokal unter `recordings/` (git-ignoriert, nicht
+im Repo — enthalten Gerätedaten).
+
+**Chunking/Reassembly (Frage 4):** In allen 8 Reconnects und über den gesamten
+Mitschnitt nur **3 abgebrochene Zyklen** (0,1 %) — die Puffer-Regel „bei `offset==1`
+leeren" hält. Beide Chunks eines Zyklus kommen praktisch zeitgleich (Median-Abstand
+< 100 ms), nicht über zwei Ticks verteilt — der volle Zyklus ist nominell **~4,0–4,2 s**
+schnell, nicht ~8,4 s wie ursprünglich angenommen.
+
+**Tick-Ausfallrate innerhalb einer Verbindung (Frage 2):** Von den Zyklus-Abständen
+*innerhalb* derselben Verbindung (Reconnect-Lücken exakt herausgerechnet, nicht
+geschätzt — siehe `intra_session_intervals()` im Werkzeug) waren **47,5 % nicht der
+nominale ~4-Sekunden-Tick**. Das bestätigt und verschärft die Beobachtung der
+ursprünglichen Spec (dort 8/24 = 33 % auf einem kurzen Mitschnitt).
+
+**Neuer Befund — `instant_values` setzt wiederholt für Minuten komplett aus, bei
+sonst intakter Verbindung:** 86-mal in 11h ein Zyklus-Abstand > 60 s, größte 393 s
+(6,5 min). Summe: **~200 Minuten von 662 Minuten Gesamtlaufzeit (≈ 30 %)**. In allen
+untersuchten Fällen (Stichprobe der 5 größten Lücken im Detail geprüft):
+
+- kein `disconnect`/`connect`-Event in der Lücke — die WebSocket-Verbindung bleibt
+  durchgehend offen
+- `wifi_station` (~alle 17 s) und `time` (~alle 25 s) laufen **unverändert im
+  gewohnten Takt weiter**
+- nach der Lücke kommen zwei Zyklen dicht hintereinander (~4 s Abstand), dann normaler
+  Betrieb
+
+Das grenzt die Ursache stark ein: kein Netzwerkproblem (sonst würden auch
+`wifi_station`/`time` aussetzen), kein WebSocket-Problem (Verbindung bleibt offen).
+Das Gerät stellt intern gezielt nur die `instant_values`-Erzeugung für diese Zeit ein.
+
+**Auswirkung auf den Watchdog-Entwurf (§5.3):** Ein „irgendein Frame in 30 s"-Wachhund
+(wie ursprünglich geplant) erkennt das **nicht** — `wifi_station`/`time` halten ihn
+durchgehend zufrieden, während `instant_values` bis zu 6,5 Minuten veraltet ist. HA
+würde in dieser Zeit einen Sensor als „verfügbar" mit stillem, veraltetem Wert zeigen
+statt ihn als unavailable zu markieren. **Konsequenz: die Integration braucht einen
+zweiten, themenspezifischen Staleness-Check auf `instant_values` selbst**, unabhängig
+vom Verbindungs-Watchdog (siehe Risiko in §9).
+
+**Reconnects (Frage 4):** 8 über 11h, alle günstig — durchschnittlich nur 2,25 s bis
+zur Wiederverbindung (Backoff blieb praktisch immer auf der 2-s-Startstufe, da der
+nächste Versuch fast immer sofort gelang). Reine Reconnect-Ausfallzeit: 18 s gesamt —
+verschwindend gegenüber den 200 Minuten `instant_values`-Stille oben. Das bestätigt:
+das Problem ist nicht die Verbindungsstabilität, sondern etwas geräteinternes.
+
+**`visible` (Frage 5):** Über 11h bei keinem der 73 beobachteten Kanäle geändert.
+Keine Aussage für den vollen 24h-Zyklus möglich, aber kein Gegenbeweis.
+
+**`alarm` als lebendiges Signal:** Der ORP-Kanal (`w_1eklenb23`) wechselte in 1.937
+von 2.663 Zyklen (72,7 %) seinen Wert und war während der Messung phasenweise im
+Alarmzustand — ein Signal, das die heutige Integration (Befund B4) nirgends zeigt.
+
+**Entprellung (§5.6), jetzt mit echten Langzeitzahlen statt einer 45-s-Stichprobe:**
+Ungebremst ~422.600 State-Writes/Tag hochgerechnet; nur-bei-Änderung ~6.200/Tag
+(1,5 % davon). Bestätigt: die Zwei-Ebenen-Entprellung ist keine Optimierung, sondern
+Voraussetzung.
+
+**HTTP-Latenz mit aktivem WS-Listener (Frage 3, teilweise):** Median 230 ms, p95 333 ms,
+n=133 (alle 5 min gemessen, `GET /js_libs/params.js`). Vergleichswert ohne Listener
+fehlt noch.
+
+**Werkzeug-Korrekturen unterwegs:** Zwei Bugs in `ws_probe.py` während der Auswertung
+gefunden und behoben — `--duration` wurde vom Empfangs-Loop ignoriert (Watchdog löst
+bei aktivem Gerät nie aus, siehe Commit-Historie), und die erste Grundtakt-Schätzung
+nahm fälschlich das *kleinste* Intervall-Cluster statt des *häufigsten* als Basis, was
+bei einem 11h-Mitschnitt mit mehreren Reconnects zu einem falschen 0,67-s-Grundtakt
+und einer irreführenden „95,5 % ausgefallen"-Zahl führte. Beide Zahlen aus diesem
+Abschnitt stammen vom korrigierten Stand.
 
 ---
 
@@ -473,7 +570,8 @@ von diesem Projekt — sie helfen auch allen, die beim Polling bleiben.
 
 | Risiko | Wirkung | Gegenmaßnahme |
 |---|---|---|
-| WiFi-Modul kommt mit Dauerverbindung nicht klar | Tick-Aussetzer, Reboots | P0-Messung 2/3 vor dem Ausbau; Watchdog + Backoff; harte Ein-Verbindungs-Regel |
+| `instant_values` setzt minutenlang aus, Verbindung bleibt intakt (§8.2, gemessen: 86× in 11h, ~30 % der Zeit) | HA zeigt veraltete Werte als "verfügbar" an, ohne dass ein reiner Verbindungs-Watchdog das merkt | Zweiter Staleness-Check speziell auf `instant_values`-Zeitstempel, unabhängig vom Frame-Watchdog; Entities nach konfigurierbarer Frist als unavailable markieren |
+| WiFi-Modul kommt mit Dauerverbindung nicht klar (mögliche Ursache des obigen Risikos) | Tick-Aussetzer, Reboots | P0-Messung Frage 1 (ohne Zuhörer messen, um Selbstverursachung auszuschließen) vor dem Ausbau; Watchdog + Backoff; harte Ein-Verbindungs-Regel |
 | Recorder-DB läuft voll | HA wird langsam | Entprellung ab P3, nicht später; Default-Heartbeat konservativ |
 | Reassembly liefert gemischte Zyklen | falsche Werte | `offset==1` leert den Puffer; nur bei `offset==total` publizieren; Zyklus-Zähler in Diagnostics |
 | Beide Integrationen parallel aktiv | 2 Clients + Polling, doppelte Entities | Getrennte Domain macht es sichtbar; README weist auf Deaktivierung hin |
@@ -484,6 +582,13 @@ von diesem Projekt — sie helfen auch allen, die beim Polling bleiben.
 
 ## 10. Offene Punkte
 
+- **Verursacht unser eigenes Zuhören die `instant_values`-Aussetzer aus §8.2, oder
+  passiert das auch ohne Client?** Die wichtigste offene Frage nach der ersten
+  Messung. Lässt sich nur durch eine Vergleichsmessung ganz ohne WS-Verbindung
+  klären (P0-Frage 1, z. B. Traffic-Mitschnitt am Switch/Router). Falls
+  selbstverursacht, spricht das gegen eine dauerhaft offene Verbindung und für ein
+  leichteres Muster (z. B. periodisches kurzes Verbinden statt einer Dauerverbindung)
+  — eine mögliche Kurskorrektur an der Kernidee dieses Konzepts.
 - WS-Schreibformat: unbekannt, bewusst nicht getestet (bleibt so bis P7).
 - Topics `wdp_status`, `wifi_status` inhaltlich unklar — `wdp_status.connection`
   (Cloud) und `wifi_station.rssi` sind aus `python-pooldose` bekannt und lassen sich

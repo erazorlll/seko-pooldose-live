@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import bisect
 import gzip
 import json
 import statistics
@@ -114,6 +115,8 @@ class Stats:
         self.errors: Counter[str] = Counter()
         self.cycle_times: list[float] = []   # monoton, Start jedes Zyklus
         self.frame_times: list[float] = []   # monoton, jeder Frame
+        self.connect_times: list[float] = []
+        self.disconnect_times: list[float] = []
         self.last_frame: float | None = None
         self.http_latency: list[float] = []
 
@@ -219,6 +222,7 @@ async def _listen(session: aiohttp.ClientSession, url: str, watchdog: float,
     async with session.ws_connect(url, heartbeat=None, autoping=True,
                                   timeout=aiohttp.ClientWSTimeout(ws_close=10)) as ws:
         stats.connects += 1
+        stats.connect_times.append(time.monotonic() - t0)
         rec.write("connect", t0, url=url)
         print(f"[{_clock()}] verbunden mit {url}")
 
@@ -319,6 +323,7 @@ async def run_record(args: argparse.Namespace) -> int:
 
                 if stop.is_set():
                     break
+                stats.disconnect_times.append(time.monotonic() - t0)
                 rec.write("disconnect", t0, reason=reason, retry_in=backoff)
                 print(f"[{_clock()}] Verbindung weg: {reason} — neuer Versuch in {backoff:.0f}s")
                 try:
@@ -370,24 +375,71 @@ def _clock() -> str:
 
 
 def estimate_tick(intervals: list[float]) -> tuple[float | None, list[float]]:
-    """Schätzt den Grundtakt aus den Zyklusabständen.
+    """Schätzt den Grundtakt als Modalwert der (auf 0,1s gerundeten) Abstände.
 
-    Zwei Durchgänge: erst der Median des kleinsten Abstands-Clusters als grober
-    Kandidat, dann verfeinert über iv/round(iv/base) je Abstand. Damit hängt das
-    Ergebnis nicht an der Annahme "4,2 s", sondern fällt aus den Daten.
+    Ein früherer Ansatz nahm den Median des *kleinsten* Abstands-Clusters als
+    Basis. Über einen längeren Mitschnitt mit mehreren Reconnects kippte das:
+    ein einzelner, sehr kurzer Abstand direkt nach einem Wiederverbinden (z. B.
+    ein Rest-Zyklus, der mitten im Takt aufschlägt) wurde als "kleinstes
+    Cluster" genommen, und daraus ergab sich ein Grundtakt von 0,67s statt der
+    tatsächlichen ~4,1s — mit Folgefehlern in Slot-Histogramm und Ausfallrate.
+    Der Modalwert ist robust dagegen: er nimmt den häufigsten Abstand, nicht
+    den kleinsten, und der ist bei einem festen Geräte-Scheduler klar dominant.
     """
     usable = [x for x in intervals if x > 0]
-    if len(usable) < 3:
+    if len(usable) < 5:
         return None, []
-    smallest = min(usable)
-    cluster = [x for x in usable if x < smallest * 1.5]
-    base = statistics.median(cluster)
-    refined = [x / round(x / base) for x in usable if round(x / base) >= 1]
-    if not refined:
+    buckets = Counter(round(x, 1) for x in usable)
+    mode_val, _ = buckets.most_common(1)[0]
+    if mode_val <= 0:
         return None, []
-    base = statistics.median(refined)
-    residuals = [abs(x - round(x / base) * base) for x in usable]
+    # Feinjustierung mit Abständen nahe eines kleinen ganzzahligen Vielfachen
+    # des Modalwerts (deckt einzelne ausgefallene Ticks ab). Reconnect-Lücken
+    # sind hier idealerweise schon nicht mehr enthalten - die Aufrufer filtern
+    # sie vorher über intra_session_intervals() anhand echter Verbindungs-
+    # grenzen heraus, statt sie über Vielfache erraten zu müssen.
+    refined = [
+        x / round(x / mode_val)
+        for x in usable
+        if 1 <= round(x / mode_val) <= 3
+        and abs(x / mode_val - round(x / mode_val)) < 0.15
+    ]
+    base = statistics.median(refined) if refined else mode_val
+    residuals = [abs(x - round(x / base) * base) for x in usable if round(x / base) <= 3]
     return base, residuals
+
+
+def intra_session_intervals(times: list[float], connect_times: list[float]) -> list[float]:
+    """Aufeinanderfolgende Abstände in `times`, aber nur innerhalb derselben
+    Verbindungssitzung.
+
+    Ein Abstand, der einen Reconnect überspannt, ist keine ausgefallene
+    Gerätesekunde, sondern eine selbstverursachte Backoff-Pause - und kann
+    Minuten dauern. Das exakt zu wissen (statt über "passt zu einem Vielfachen
+    des Takts?" zu raten) macht `connect_times` möglich: jede Grenze ist ein
+    echter Verbindungsaufbau, kein geschätzter Schwellwert.
+    """
+    boundaries = sorted(connect_times)
+    out = []
+    for a, b in zip(times, times[1:]):
+        i = bisect.bisect_right(boundaries, a)
+        if i < len(boundaries) and boundaries[i] < b:
+            continue  # ein Reconnect liegt zwischen a und b -> nicht vergleichbar
+        out.append(round(b - a, 3))
+    return out
+
+
+def pair_outages(disconnect_times: list[float], connect_times: list[float]) -> list[float]:
+    """Ordnet jedem `disconnect` das nächste `connect` danach zu und gibt die
+    jeweilige Ausfalldauer zurück. Direkte Messung statt Ableitung aus
+    Zyklus-Lücken."""
+    connects = sorted(connect_times)
+    durations = []
+    for d in sorted(disconnect_times):
+        i = bisect.bisect_right(connects, d)
+        if i < len(connects):
+            durations.append(connects[i] - d)
+    return durations
 
 
 def stats_to_dict(stats: Stats, duration: float) -> dict[str, Any]:
@@ -401,21 +453,40 @@ def stats_to_dict(stats: Stats, duration: float) -> dict[str, Any]:
         "connects": stats.connects,
         "watchdog_trips": stats.watchdog_trips,
         "errors": dict(stats.errors),
-        "cycle_intervals": [round(b - a, 3) for a, b in
-                            zip(stats.cycle_times, stats.cycle_times[1:])],
+        "cycle_intervals": intra_session_intervals(stats.cycle_times, stats.connect_times),
         "frame_intervals": [round(b - a, 3) for a, b in
                             zip(stats.frame_times, stats.frame_times[1:])],
         "http_latency": stats.http_latency,
+        "outage_durations": pair_outages(stats.disconnect_times, stats.connect_times),
     }
 
 
 def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
+    """Liest JSON Lines, tolerant gegenüber einem hart abgebrochenen Mitschnitt.
+
+    `Recorder.write()` flusht nach jeder Zeile mit Z_SYNC_FLUSH (gzip-Default) -
+    bereits geschriebene Zeilen sind also immer vollständig auf der Platte. Fehlt
+    nur der abschließende gzip-Trailer (Prozess getötet statt sauber beendet),
+    bricht die Auswertung hier ab statt den gesamten Mitschnitt zu verwerfen.
+    """
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8") as fh:  # type: ignore[operator]
-        for line in fh:
+        while True:
+            try:
+                line = fh.readline()
+            except (EOFError, OSError) as err:
+                print(f"Hinweis: Mitschnitt endet abrupt ({type(err).__name__}: {err}) "
+                      "— werte den lesbaren Teil aus.", file=sys.stderr)
+                break
+            if not line:
+                break
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
 
 def load_recording(path: Path) -> dict[str, Any]:
@@ -423,6 +494,8 @@ def load_recording(path: Path) -> dict[str, Any]:
     topics: Counter[str] = Counter()
     cycle_times: list[float] = []
     frame_times: list[float] = []
+    connect_times: list[float] = []
+    disconnect_times: list[float] = []
     errors: Counter[str] = Counter()
     http: list[float] = []
     frames = total_bytes = cycles_done = cycles_aborted = connects = watchdogs = 0
@@ -452,6 +525,9 @@ def load_recording(path: Path) -> dict[str, Any]:
                         snapshots.append((t, snap))
         elif ev == "connect":
             connects += 1
+            connect_times.append(t)
+        elif ev == "disconnect":
+            disconnect_times.append(t)
         elif ev == "watchdog":
             watchdogs += 1
         elif ev == "http":
@@ -469,14 +545,19 @@ def load_recording(path: Path) -> dict[str, Any]:
         "connects": connects,
         "watchdog_trips": watchdogs,
         "errors": dict(errors),
-        "cycle_intervals": [round(b - a, 3) for a, b in zip(cycle_times, cycle_times[1:])],
+        "cycle_intervals": intra_session_intervals(cycle_times, connect_times),
         "frame_intervals": [round(b - a, 3) for a, b in zip(frame_times, frame_times[1:])],
         "http_latency": http,
+        "outage_durations": pair_outages(disconnect_times, connect_times),
         "_snapshots": snapshots,
     }
 
 
 def build_report(raw: dict[str, Any]) -> dict[str, Any]:
+    # cycle_intervals kommt bereits sitzungssicher an (siehe
+    # intra_session_intervals) - jeder Abstand hier liegt innerhalb einer
+    # ununterbrochenen Verbindung, keine Reconnect-/Backoff-Pause ist mehr
+    # dabei. Das Slot-Histogramm braucht also keine nachträgliche Bereinigung.
     intervals = raw["cycle_intervals"]
     base, residuals = estimate_tick(intervals)
     report = dict(raw)
@@ -488,6 +569,10 @@ def build_report(raw: dict[str, Any]) -> dict[str, Any]:
         report["slots_expected"] = sum(slots)
         report["slots_missed"] = sum(s - 1 for s in slots)
         report["slot_histogram"] = dict(sorted(Counter(slots).items()))
+
+    outages = raw.get("outage_durations") or []
+    report["outage_count"] = len(outages)
+    report["outage_seconds"] = sum(outages)
     report["longest_gap"] = max(raw["frame_intervals"], default=0.0)
     return report
 
@@ -577,9 +662,14 @@ def print_report(rep: dict[str, Any], channels: dict[str, Any] | None = None) ->
               f"max. Abweichung {rep['tick_residual_max']:.2f}s")
         exp, missed = rep["slots_expected"], rep["slots_missed"]
         rate = missed / exp * 100 if exp else 0
-        print(f"Erwartete Slots       {exp}   ausgefallen {missed} ({rate:.1f}%)")
+        print(f"Erwartete Slots       {exp}   ausgefallen {missed} ({rate:.1f}%)"
+              "   [nur waehrend bestehender Verbindung]")
         print(f"Slot-Histogramm       {rep['slot_histogram']}"
               "   (1 = kein Ausfall)")
+    if rep.get("outage_count"):
+        print(f"Reconnect-Ausfallzeit {rep['outage_seconds']:.0f}s "
+              f"in {rep['outage_count']} Lücke(n)   "
+              "[separat von der Tick-Ausfallrate oben, per connect/disconnect gemessen]")
     print(f"Längste Frame-Lücke   {rep['longest_gap']:.1f}s")
     print()
 
