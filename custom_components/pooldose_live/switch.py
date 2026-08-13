@@ -1,10 +1,10 @@
-"""Switch-Plattform für pooldose_live: dynamisch aus aufgelösten Kanälen.
+"""Switch platform for pooldose_live: dynamic from resolved channels.
 
-Schreibend (P4). Nur gemappte switch-Kanäle - im Raw-Modus werden bare
-Booleans als binary_sensor klassifiziert, nicht als switch (Konzept §5.5):
-ohne Mapping-Tabelle wissen wir nicht, ob ein Kanal wirklich schreibbar ist,
-und ein falsch geschriebener Frame kann laut websocker-spec.md Parameter
-einer echten Dosieranlage verstellen.
+Writable (P4). Only mapped switch channels - in raw mode, bare booleans are
+classified as binary_sensor, not switch (concept §5.5): without a mapping
+table we don't know whether a channel is genuinely writable, and a wrongly
+written frame can, per websocker-spec.md, change parameters on a real
+dosing system.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ async def async_setup_entry(
     config_entry: PooldoseLiveConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Richtet die Switch-Plattform ein und hört auf neue Kanäle."""
+    """Sets up the switch platform and listens for new channels."""
     coordinator = config_entry.runtime_data
     added: set[str] = set()
 
@@ -51,7 +51,7 @@ def _describe(name: str) -> SwitchEntityDescription:
 
 
 class PooldoseLiveSwitch(PooldoseLiveEntity, SwitchEntity):
-    """Switch-Entity für einen aufgelösten pooldose_live-Kanal."""
+    """Switch entity for a resolved pooldose_live channel."""
 
     @property
     def is_on(self) -> bool | None:

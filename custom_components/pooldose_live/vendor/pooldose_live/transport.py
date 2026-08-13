@@ -1,23 +1,25 @@
-"""WebSocket-Transport für den lokalen PoolDose-Stream (Konzept §5.3).
+"""WebSocket transport for the local PoolDose stream (concept §5.3).
 
-Eine Verbindung, automatischer Reconnect mit Backoff, Reassembly nach
-`progressInfo`, und zwei separat geführte Watchdogs:
+One connection, automatic reconnect with backoff, reassembly by
+`progressInfo`, and two separately maintained watchdogs:
 
-- **Verbindungs-Watchdog**: kein Frame irgendeines Topics innerhalb von
-  `connection_watchdog` Sekunden -> Reconnect. Deckt echte Verbindungsabbrüche.
-- **Staleness-Watchdog**: kein *vollständiger* `instant_values`-Zyklus
-  innerhalb von `staleness_timeout` Sekunden -> `stale`-Event, **ohne** die
-  Verbindung zu trennen.
+- **Connection watchdog**: no frame of any topic within
+  `connection_watchdog` seconds -> reconnect. Catches actual connection
+  drops.
+- **Staleness watchdog**: no *complete* `instant_values` cycle within
+  `staleness_timeout` seconds -> `stale` event, **without** dropping the
+  connection.
 
-Der zweite Watchdog ist kein Kür-Feature: Die 11h-Messung (Konzept §8.2) fand
-wiederholte, bis zu 6,5-minütige Aussetzer *ausschließlich* bei
-`instant_values`, während `wifi_station`/`time` normal weiterliefen und die
-Verbindung nie abriss. Ein reiner Verbindungs-Watchdog hätte das nie bemerkt.
+The second watchdog isn't a nice-to-have: the 11h measurement (concept
+§8.2) found recurring dropouts of up to 6.5 minutes *exclusively* on
+`instant_values`, while `wifi_station`/`time` kept running normally and the
+connection never dropped. A plain connection watchdog would never have
+noticed.
 
-Reassembly-Logik und die Kernschleife sind aus `tools/ws_probe.py` übernommen
-(dort an ca. 15h realer Gerätedaten validiert, inkl. des Fixes für den
-`--duration`-Bug, siehe Commit-Historie), hier als wiederverwendbare
-Bibliothek statt CLI-Skript mit Seiteneffekten.
+The reassembly logic and the core loop are taken from `tools/ws_probe.py`
+(validated there against roughly 15h of real device data, including the fix
+for the `--duration` bug, see the commit history), here as a reusable
+library instead of a CLI script with side effects.
 """
 
 from __future__ import annotations
@@ -33,10 +35,10 @@ import aiohttp
 DEFAULT_PORT = 1334
 DEFAULT_CONNECTION_WATCHDOG = 30.0
 DEFAULT_STALENESS_TIMEOUT = 90.0
-"""90s: liegt über der normalen Tick-Jitter-Bandbreite (Grundtakt ~4,2s, auch
-mit ein paar ausgefallenen Ticks bleibt man i.d.R. deutlich darunter), aber
-weit unter den in §8.2/§8.3 gemessenen echten Aussetzern (bis zu 9,7 Minuten)
-- markiert Kanäle also zeitnah als stale, ohne bei normalem Jitter zu flackern."""
+"""90s: above the normal tick-jitter range (base tick ~4.2s, even with a few
+dropped ticks you usually stay well under this), but far below the real
+dropouts measured in §8.2/§8.3 (up to 9.7 minutes) - so channels get marked
+stale promptly, without flapping on normal jitter."""
 DEFAULT_STALENESS_CHECK_INTERVAL = 5.0
 DEFAULT_BACKOFF_START = 2.0
 DEFAULT_BACKOFF_MAX = 60.0
@@ -48,28 +50,28 @@ EventKind = Literal["connected", "disconnected", "watchdog", "snapshot", "stale"
 
 @dataclass
 class TransportEvent:
-    """Ein Ereignis aus `PooldoseTransport.events()`."""
+    """An event from `PooldoseTransport.events()`."""
 
     kind: EventKind
     t: float
-    """Sekunden seit Start von `events()` (monotonic)."""
+    """Seconds since `events()` started (monotonic)."""
     device_id: str | None = None
     devicedata: dict[str, Any] | None = None
-    """Bei kind='snapshot': gemergtes, vollständiges devicedata[<device_id>]-Dict."""
+    """For kind='snapshot': the merged, complete devicedata[<device_id>] dict."""
     reason: str | None = None
-    """Bei kind='disconnected'/'watchdog'."""
+    """For kind='disconnected'/'watchdog'."""
     since: float | None = None
-    """Bei kind='stale': Sekunden seit dem letzten vollständigen Zyklus."""
+    """For kind='stale': seconds since the last complete cycle."""
     retry_in: float | None = None
-    """Bei kind='disconnected': Backoff bis zum nächsten Verbindungsversuch."""
+    """For kind='disconnected': backoff until the next connection attempt."""
 
 
 class Reassembler:
-    """Setzt gechunkte instant_values-Zyklen nach den Regeln der Spec zusammen.
+    """Reassembles chunked instant_values cycles per the rules in the spec.
 
-    Bei `offset == 1` wird der Puffer geleert (halbe Zyklen sind real, sonst
-    entstehen Frankenstein-Datensätze aus zwei Runden), erst bei
-    `offset == total` wird weiterverarbeitet.
+    On `offset == 1` the buffer is cleared (half-cycles are real, otherwise
+    you get Frankenstein records mixing two rounds); only on
+    `offset == total` does it get processed further.
     """
 
     def __init__(self) -> None:
@@ -96,11 +98,11 @@ class Reassembler:
 
 
 class PooldoseTransport:
-    """Hält eine WebSocket-Verbindung zu einer PoolDose und liefert Snapshots.
+    """Holds a WebSocket connection to a PoolDose and delivers snapshots.
 
-    Läuft für immer (bis der Konsument die Iteration abbricht oder die Task
-    gecancelt wird) - reconnected automatisch mit exponentiellem Backoff.
-    Genau eine Verbindung pro Instanz, wie in Konzept §4 empfohlen.
+    Runs forever (until the consumer stops iterating or the task gets
+    cancelled) - reconnects automatically with exponential backoff. Exactly
+    one connection per instance, as recommended in concept §4.
     """
 
     def __init__(
@@ -153,14 +155,13 @@ class PooldoseTransport:
                         ) as ws:
                             await queue.put(TransportEvent(kind="connected", t=time.monotonic() - t0))
                             backoff = self.backoff_start
-                            # Baseline für die Staleness-Prüfung auf den
-                            # Verbindungszeitpunkt setzen, nicht auf None
-                            # belassen: verbindet man sich mitten in einen
-                            # Aussetzer (§8.2/§8.3) hinein, muss "noch nie
-                            # einen Snapshot gesehen" ebenfalls als
-                            # potenziell stale zählen - sonst prüft
-                            # staleness_checker() nie, weil last_snapshot_t
-                            # dauerhaft None bleibt.
+                            # Set the staleness baseline to the connection
+                            # time instead of leaving it at None: if we
+                            # connect right in the middle of a dropout
+                            # (§8.2/§8.3), "never seen a snapshot yet" also
+                            # has to count as potentially stale - otherwise
+                            # staleness_checker() never checks, because
+                            # last_snapshot_t stays None forever.
                             if state["last_snapshot_t"] is None:
                                 state["last_snapshot_t"] = time.monotonic()
                             reason = await self._receive_loop(ws, reasm, queue, t0, state)
@@ -190,20 +191,20 @@ class PooldoseTransport:
         t0: float,
         state: dict[str, Any],
     ) -> str:
-        """Liest Frames bis Verbindungsende. Gibt den Abbruchgrund zurück."""
+        """Reads frames until the connection ends. Returns the reason it ended."""
         while True:
             try:
                 msg = await asyncio.wait_for(ws.receive(), timeout=self.connection_watchdog)
             except asyncio.TimeoutError:
                 await queue.put(TransportEvent(kind="watchdog", t=time.monotonic() - t0,
-                                               reason=f"{self.connection_watchdog:.0f}s ohne Frame"))
-                return f"watchdog ({self.connection_watchdog:.0f}s ohne Frame)"
+                                               reason=f"{self.connection_watchdog:.0f}s without a frame"))
+                return f"watchdog ({self.connection_watchdog:.0f}s without a frame)"
 
             if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED,
                             aiohttp.WSMsgType.CLOSING):
-                return f"Gegenstelle hat geschlossen ({msg.type.name})"
+                return f"remote side closed ({msg.type.name})"
             if msg.type is aiohttp.WSMsgType.ERROR:
-                return f"WS-Fehler: {ws.exception()}"
+                return f"WS error: {ws.exception()}"
             if msg.type is not aiohttp.WSMsgType.TEXT:
                 continue
 

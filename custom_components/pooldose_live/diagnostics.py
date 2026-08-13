@@ -1,13 +1,14 @@
-"""Diagnostics für pooldose_live (Konzept §5.8).
+"""Diagnostics for pooldose_live (concept §5.8).
 
-Liefert den letzten vollständigen Roh-Snapshot (Seriennummer redigiert) plus
-eine kleine Sitzungsstatistik. Dasselbe Material, aus dem in Issue #20 von
-lmaertin/python-pooldose ein community-beigesteuertes Mapping für ein
-unbekanntes Gerät entstand - hier ohne CLI-Gefummel direkt aus HA exportierbar.
+Provides the last complete raw snapshot (serial number redacted) plus a
+small session statistics set. The same material from which a community
+mapping for an unknown device was contributed in issue #20 at
+lmaertin/python-pooldose - here exportable directly from HA without CLI
+fumbling.
 
-Nur die laufende Sitzung, kein Ersatz für einen echten Mitschnitt wie in P0
-(tools/ws_probe.py) - für Ticks/Sekunde über Stunden hinweg bleibt das das
-richtige Werkzeug.
+Only the running session, not a replacement for a real recording like in
+P0 (tools/ws_probe.py) - for ticks/second over hours, that remains the
+right tool.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ TO_REDACT = {"device_id"}
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: PooldoseLiveConfigEntry
 ) -> dict[str, Any]:
-    """Diagnostics für einen pooldose_live-Config-Entry."""
+    """Diagnostics for a pooldose_live config entry."""
     coordinator = entry.runtime_data
     mapping = coordinator.mapping
 

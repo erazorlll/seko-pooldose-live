@@ -1,10 +1,10 @@
-"""Tests für die Schreib-Validierung (P4, pooldose_live/write.py).
+"""Tests for write validation (P4, pooldose_live/write.py).
 
-Reine Bibliothekslogik ohne Home-Assistant-Abhängigkeit - anders als
-test_p2/p3_manual.py läuft das als regulärer pytest-Test (kein
-homeassistant.runner/fcntl-Problem, siehe README).
+Pure library logic without a Home Assistant dependency - unlike
+test_p2/p3_manual.py this runs as a regular pytest test (no
+homeassistant.runner/fcntl problem, see README).
 
-Ausführen: python -m pytest tests/test_write.py -v
+Run: python -m pytest tests/test_write.py -v
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from pooldose_live.write import (
     encode_switch,
 )
 
-# ph_target des Zielgeräts: min=6, max=8, step=0.1 (aus dem echten Mapping)
+# ph_target of the target device: min=6, max=8, step=0.1 (from the real mapping)
 PH_TARGET = Channel(hash="w_1ekeiqfat", current=7.1, abs_min=6, abs_max=8, resolution=0.1)
 
 WATER_METER = Channel(
@@ -37,19 +37,19 @@ WATER_METER = Channel(
 
 def test_encode_number_valid() -> None:
     assert encode_number(PH_TARGET, 7.4) == 7.4
-    assert encode_number(PH_TARGET, 6.0) == 6.0  # Untergrenze
-    assert encode_number(PH_TARGET, 8.0) == 8.0  # Obergrenze
+    assert encode_number(PH_TARGET, 6.0) == 6.0  # lower bound
+    assert encode_number(PH_TARGET, 8.0) == 8.0  # upper bound
 
 
 def test_encode_number_out_of_range() -> None:
-    with pytest.raises(WriteError, match="außerhalb"):
+    with pytest.raises(WriteError, match="outside"):
         encode_number(PH_TARGET, 8.5)
-    with pytest.raises(WriteError, match="außerhalb"):
+    with pytest.raises(WriteError, match="outside"):
         encode_number(PH_TARGET, 5.9)
 
 
 def test_encode_number_wrong_step() -> None:
-    with pytest.raises(WriteError, match="Schrittweite"):
+    with pytest.raises(WriteError, match="step size"):
         encode_number(PH_TARGET, 7.03)
 
 
@@ -57,7 +57,7 @@ def test_encode_number_not_a_number() -> None:
     with pytest.raises(WriteError):
         encode_number(PH_TARGET, "7.1")
     with pytest.raises(WriteError):
-        encode_number(PH_TARGET, True)  # bool ist technisch int, muss abgelehnt werden
+        encode_number(PH_TARGET, True)  # bool is technically an int, must be rejected
 
 
 def test_encode_switch_valid() -> None:
@@ -78,7 +78,7 @@ def test_encode_select_valid() -> None:
 
 
 def test_encode_select_invalid() -> None:
-    with pytest.raises(WriteError, match="Erlaubt"):
+    with pytest.raises(WriteError, match="Allowed"):
         encode_select(WATER_METER, "gallons")
 
 

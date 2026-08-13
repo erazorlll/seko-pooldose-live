@@ -1,12 +1,12 @@
 """CLI: python -m pooldose_live.probe --host <ip>
 
-Verbindet sich, leitet Modell/FW-Code direkt aus den ersten empfangenen
-Daten-Keys ab (kein HTTP-Call nötig, siehe Konzept §4), lädt die passende
-Mapping-Tabelle (oder fällt in den Raw-Modus, §5.5) und zeigt die
-aufgelösten Kanäle. Das ist der P1-Abschlusspunkt aus dem Phasenplan
-(Konzept §7): "python -m pooldose_live.probe --host … zeigt aufgelöste Kanäle".
+Connects, derives the model/FW code directly from the first received data
+keys (no HTTP call needed, see concept §4), loads the matching mapping
+table (or falls back to raw mode, §5.5), and shows the resolved channels.
+This is the P1 completion criterion from the phase plan (concept §7):
+"python -m pooldose_live.probe --host … shows resolved channels".
 
-Rein lesend - sendet nie einen Frame, öffnet nur eine Verbindung.
+Read-only - never sends a frame, only opens a connection.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ def _clock() -> str:
 def _format_value(rc: ResolvedChannel) -> str:
     unit = rc.channel.unit
     if rc.type == "number" and (rc.min is not None or rc.max is not None):
-        bounds = f"  [{rc.min}..{rc.max}" + (f", Schritt {rc.step}]" if rc.step is not None else "]")
+        bounds = f"  [{rc.min}..{rc.max}" + (f", step {rc.step}]" if rc.step is not None else "]")
     else:
         bounds = ""
     unit_str = f" {unit}" if unit else ""
@@ -46,17 +46,17 @@ def print_table(mapping: ModelMapping, resolved: list[ResolvedChannel], *, show_
     visible.sort(key=lambda rc: (rc.source != "mapping", rc.name))
 
     print("=" * 100)
-    print(f"Modell {mapping.model_id}  FW {mapping.fw_code}  "
+    print(f"Model {mapping.model_id}  FW {mapping.fw_code}  "
           f"Mapping: {mapping.status.value}"
-          + (f" (genutzt: FW{mapping.matched_fw})" if mapping.matched_fw and mapping.matched_fw != mapping.fw_code.removeprefix('FW') else ""))
+          + (f" (using: FW{mapping.matched_fw})" if mapping.matched_fw and mapping.matched_fw != mapping.fw_code.removeprefix('FW') else ""))
     n_table, n_hashes = mapping.coverage
     n_named = sum(1 for rc in resolved if rc.source == "mapping")
     n_raw = sum(1 for rc in resolved if rc.source == "raw")
     n_hidden = sum(1 for rc in resolved if not rc.channel.visible)
-    print(f"Kanäle: {len(resolved)} gesamt, {n_named} benannt, {n_raw} raw-Fallback, "
-          f"{n_hidden} visible=false" + ("" if show_invisible else " (ausgeblendet, --show-invisible zeigt sie)"))
+    print(f"Channels: {len(resolved)} total, {n_named} named, {n_raw} raw fallback, "
+          f"{n_hidden} visible=false" + ("" if show_invisible else " (hidden, --show-invisible reveals them)"))
     print("=" * 100)
-    print(f"{'Name':38} {'Typ':14} {'Wert':30} {'Kanal':16} Quelle")
+    print(f"{'Name':38} {'Type':14} {'Value':30} {'Channel':16} Source")
     print("-" * 100)
     for rc in visible:
         alarm = "  ⚠ ALARM" if rc.channel.alarm else ""
@@ -74,16 +74,16 @@ async def run(args: argparse.Namespace) -> int:
     loop = asyncio.get_event_loop()
     deadline = loop.time() + args.duration if args.duration else None
 
-    print(f"Verbinde zu ws://{args.host}:{args.port}/ ...")
-    print(f"Verbindungs-Watchdog {args.connection_watchdog:.0f}s   "
-          f"Staleness-Timeout {args.staleness_timeout:.0f}s\n")
+    print(f"Connecting to ws://{args.host}:{args.port}/ ...")
+    print(f"Connection watchdog {args.connection_watchdog:.0f}s   "
+          f"Staleness timeout {args.staleness_timeout:.0f}s\n")
 
-    # Kein `async for` direkt über transport.events(): das Gerät kann laut
-    # Konzept §8.2/§8.3 minutenlang keinen einzigen Frame schicken, ohne die
-    # Verbindung zu trennen. --duration muss auch dann greifen, wenn gar
-    # kein Event ankommt - also den Iterator explizit mit einem Timeout
-    # abfragen statt reaktiv im Schleifenkörper zu prüfen (derselbe Fehler
-    # steckte anfangs in tools/ws_probe.py, siehe dessen Commit-Historie).
+    # No `async for` directly over transport.events(): per concept
+    # §8.2/§8.3 the device can go minutes without sending a single frame,
+    # without the connection dropping. --duration has to take effect even
+    # when no event arrives at all - so poll the iterator explicitly with a
+    # timeout instead of checking reactively in the loop body (the same bug
+    # originally lived in tools/ws_probe.py, see its commit history).
     events = transport.events()
     try:
         return await _consume(events, args, deadline, loop)
@@ -109,25 +109,25 @@ async def _consume(events, args: argparse.Namespace, deadline: float | None, loo
             event = await events.__anext__()
 
         if event.kind == "connected":
-            print(f"[{_clock()}] verbunden")
+            print(f"[{_clock()}] connected")
         elif event.kind == "disconnected":
-            retry_note = f" (nächster Versuch in {event.retry_in:.0f}s)" if event.retry_in else ""
-            print(f"[{_clock()}] Verbindung weg: {event.reason}{retry_note}")
+            retry_note = f" (next attempt in {event.retry_in:.0f}s)" if event.retry_in else ""
+            print(f"[{_clock()}] connection lost: {event.reason}{retry_note}")
         elif event.kind == "watchdog":
-            print(f"[{_clock()}] Watchdog: {event.reason}")
+            print(f"[{_clock()}] watchdog: {event.reason}")
         elif event.kind == "stale":
-            print(f"[{_clock()}] ⚠ STALE: seit {event.since:.0f}s kein vollständiger "
-                  f"instant_values-Zyklus mehr (Verbindung bleibt bestehen)")
+            print(f"[{_clock()}] ⚠ STALE: no complete instant_values cycle for "
+                  f"{event.since:.0f}s (connection still up)")
         elif event.kind == "fresh":
-            print(f"[{_clock()}] wieder aktuell")
+            print(f"[{_clock()}] fresh again")
         elif event.kind == "snapshot":
             channels: dict[str, Channel] = decode_devicedata(event.devicedata or {})
 
             if mapping is None:
                 prefix = detect_prefix(event.devicedata or {})
                 if prefix is None:
-                    print(f"[{_clock()}] Konnte Modell/FW nicht aus den Daten-Keys ableiten, "
-                          "überspringe Snapshot")
+                    print(f"[{_clock()}] Could not derive model/FW from the data keys, "
+                          "skipping snapshot")
                     continue
                 model_id, fw_code = prefix
                 mapping = load_mapping(model_id, fw_code)
@@ -139,7 +139,7 @@ async def _consume(events, args: argparse.Namespace, deadline: float | None, loo
                 printed_table = True
                 if args.once:
                     return 0
-                print(f"\n[{_clock()}] Live-Änderungen (Strg+C zum Beenden):")
+                print(f"\n[{_clock()}] Live changes (Ctrl+C to stop):")
                 last_display = {rc.name: rc.display for rc in resolved}
             else:
                 changed = [rc for rc in resolved if last_display.get(rc.name) != rc.display]
@@ -155,17 +155,17 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(
         prog="pooldose_live.probe",
-        description="Verbindet zur PoolDose, zeigt aufgelöste Kanäle (P1, ohne HA).")
-    parser.add_argument("--host", required=True, help="IP oder Hostname des Geräts")
+        description="Connects to the PoolDose, shows resolved channels (P1, without HA).")
+    parser.add_argument("--host", required=True, help="IP or hostname of the device")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--connection-watchdog", type=float, default=DEFAULT_CONNECTION_WATCHDOG)
     parser.add_argument("--staleness-timeout", type=float, default=DEFAULT_STALENESS_TIMEOUT)
     parser.add_argument("--once", action="store_true",
-                        help="Nach der ersten vollständigen Tabelle beenden")
+                        help="Exit after the first complete table")
     parser.add_argument("--duration", type=float, default=0,
-                        help="Sekunden Gesamtlaufzeit; 0 = bis Strg+C oder --once")
+                        help="Total runtime in seconds; 0 = until Ctrl+C or --once")
     parser.add_argument("--show-invisible", action="store_true",
-                        help="Auch Kanäle mit visible=false anzeigen (Konzept B3)")
+                        help="Also show channels with visible=false (concept B3)")
 
     args = parser.parse_args(argv)
     try:

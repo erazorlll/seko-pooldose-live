@@ -1,11 +1,10 @@
-"""Sensor-Plattform für pooldose_live: Entities dynamisch aus aufgelösten Kanälen.
+"""Sensor platform for pooldose_live: entities dynamically from resolved channels.
 
-Anders als die statische EntityDescription-Tabelle der Core-Integration:
-welche Kanäle es gibt, steht erst zur Laufzeit fest (Mapping-Treffer oder
-Raw-Fallback, Konzept §5.5). Entities entstehen deshalb dynamisch, sobald ein
-Kanalname zum ersten Mal im Coordinator auftaucht - nicht nur beim Setup,
-da der erste Snapshot laut §8.2/§8.3 auch erst nach dem Start der
-Plattform eintreffen kann.
+Unlike the core integration's static EntityDescription table: which channels
+exist is only known at runtime (mapping hit or raw fallback, concept §5.5).
+Entities are therefore created dynamically as soon as a channel name first
+appears in the coordinator - not only at setup, since per §8.2/§8.3 the
+first snapshot can also arrive only after the platform has started.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ async def async_setup_entry(
     config_entry: PooldoseLiveConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Richtet die Sensor-Plattform ein und hört auf neue Kanäle."""
+    """Sets up the sensor platform and listens for new channels."""
     coordinator = config_entry.runtime_data
     added: set[str] = set()
 
@@ -48,12 +47,12 @@ async def async_setup_entry(
 
 
 def _describe(name: str) -> SensorEntityDescription:
-    # Kein translation_key: die Kanalmenge ist dynamisch (Mapping-Treffer
-    # oder Raw-Fallback mit hash-basiertem Namen, Konzept §5.5) und lässt
-    # sich nicht vorab in einer strings.json abdecken - direkt ein lesbarer
-    # Name statt eines Schlüssels ohne Übersetzungstreffer.
-    # Raw-Fallback-Kanäle standardmäßig deaktiviert - Diagnose-Material für
-    # unbekannte/neue Geräte, kein kuratiertes UI.
+    # No translation_key: the set of channels is dynamic (mapping hit or
+    # raw fallback with a hash-based name, concept §5.5) and can't be
+    # covered in a strings.json ahead of time - a readable name directly
+    # instead of a key without a translation match.
+    # Raw-fallback channels disabled by default - diagnostic material for
+    # unknown/new devices, not a curated UI.
     return SensorEntityDescription(
         key=name,
         name=name.removeprefix("raw_").replace("_", " ").strip().capitalize(),
@@ -62,7 +61,7 @@ def _describe(name: str) -> SensorEntityDescription:
 
 
 class PooldoseLiveSensor(PooldoseLiveEntity, SensorEntity):
-    """Sensor-Entity für einen aufgelösten pooldose_live-Kanal."""
+    """Sensor entity for a resolved pooldose_live channel."""
 
     @property
     def native_value(self) -> object:
@@ -76,8 +75,8 @@ class PooldoseLiveSensor(PooldoseLiveEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, object] | None:
-        # Konzept B4: das alarm-Flag wird von der Core-Integration nirgends
-        # sichtbar gemacht - hier als Attribut, statt es zu verwerfen.
+        # Concept B4: the alarm flag isn't surfaced anywhere by the core
+        # integration - exposed here as an attribute instead of discarding it.
         resolved = self.resolved
         if resolved and resolved.channel.alarm is not None:
             return {"alarm": resolved.channel.alarm}

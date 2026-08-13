@@ -1,13 +1,13 @@
-"""Basis-Entity für pooldose_live.
+"""Base entity for pooldose_live.
 
-Enthält auch die Entprellung auf Entity-Ebene (Konzept §5.6): Der
-Coordinator benachrichtigt bei JEDER Änderung irgendeines Kanals, aber ohne
-einen zweiten Filter hier würde das jede der ~40-70 Entities zum Schreiben
-bringen, sobald sich auch nur ein einziger Kanal ändert. `_handle_coordinator_
-update()` prüft deshalb pro Entity, ob der EIGENE Wert sich relevant
-geändert hat (resolution-bewusst bei Zahlen), bevor `async_write_ha_state()`
-aufgerufen wird - plus ein Heartbeat, damit Recorder-Verläufe nicht über
-Stunden abreißen, wenn ein Kanal einfach konstant bleibt.
+Also contains the debouncing at the entity level (concept §5.6): the
+coordinator notifies on EVERY change to any channel, but without a second
+filter here that would make every one of the ~40-70 entities write on any
+single channel changing. `_handle_coordinator_update()` therefore checks
+per entity whether its OWN value changed relevantly (resolution-aware for
+numbers) before calling `async_write_ha_state()` - plus a heartbeat, so
+recorder histories don't develop gaps over hours when a channel simply
+stays constant.
 """
 
 from __future__ import annotations
@@ -32,21 +32,21 @@ from .const import DOMAIN, MANUFACTURER
 from .coordinator import PooldoseLiveCoordinator
 
 HEARTBEAT_INTERVAL = 300.0
-"""5 Minuten, Konzept §5.6 - erzwingt einen Schreibvorgang auch ohne
-relevante Änderung, damit Recorder-Zeitreihen nicht unbegrenzt Lücken haben."""
+"""5 minutes, concept §5.6 - forces a write even without a relevant change,
+so recorder time series don't have unbounded gaps."""
 
-# Kanäle, deren letzter bekannter Wert auch während einer instant_values-
-# Staleness-Phase als "verfügbar" gelten soll - weil sie selbst das
-# Diagnose-Signal sind, das die Staleness erklären könnte (Konzept §8.4:
-# alarm_system_standby korreliert zwar nicht mit den meisten Aussetzern,
-# ist aber trotzdem der relevanteste bekannte Kontext dafür).
+# Channels whose last known value should count as "available" even during
+# an instant_values staleness period - because they're themselves the
+# diagnostic signal that might explain the staleness (concept §8.4:
+# alarm_system_standby doesn't correlate with most dropouts, but is still
+# the most relevant known context for them).
 ALWAYS_AVAILABLE_WHEN_STALE = {"alarm_system_standby"}
 
 
 def _device_info(coordinator: PooldoseLiveCoordinator) -> DeviceInfo:
-    """Gerätename/-modell erst vorhanden, sobald der erste Snapshot ankam -
-    vorher Platzhalter statt eines HTTP-Calls (Konzept §4: Modell/FW sind
-    aus den Daten-Keys ableitbar, kein HTTP nötig)."""
+    """Device name/model only available once the first snapshot arrived -
+    a placeholder before that instead of an HTTP call (concept §4:
+    model/FW are derivable from the data keys, no HTTP needed)."""
     mapping = coordinator.mapping
     return DeviceInfo(
         identifiers={(DOMAIN, coordinator.host)},
@@ -59,9 +59,9 @@ def _device_info(coordinator: PooldoseLiveCoordinator) -> DeviceInfo:
 
 
 def _is_relevant_change(old: Any, new: Any, resolution: Any) -> bool:
-    """Numerisch: mindestens eine Auflösungsstufe Unterschied. Sonst: jede
-    Änderung. `bool` wird trotz int-Erbschaft nie als "numerisch" behandelt -
-    ein Flag-Wechsel ist immer relevant."""
+    """Numeric: at least one resolution step of difference. Otherwise: any
+    change. `bool` is never treated as "numeric" despite inheriting from
+    int - a flag flip is always relevant."""
     if old is None:
         return True
     is_num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
@@ -71,11 +71,11 @@ def _is_relevant_change(old: Any, new: Any, resolution: Any) -> bool:
 
 
 class PooldoseLiveEntity(CoordinatorEntity[PooldoseLiveCoordinator]):
-    """Basisklasse für alle pooldose_live-Entities.
+    """Base class for all pooldose_live entities.
 
-    Ein Kanalname (`channel_name`) identifiziert die Entity gegenüber dem
-    Coordinator - der aktuelle Wert wird nicht im Konstruktor eingefroren,
-    sondern bei jedem Update über `resolved` neu gelesen.
+    A channel name (`channel_name`) identifies the entity to the
+    coordinator - the current value isn't frozen in the constructor, but
+    re-read via `resolved` on every update.
     """
 
     _attr_has_entity_name = True
@@ -101,9 +101,9 @@ class PooldoseLiveEntity(CoordinatorEntity[PooldoseLiveCoordinator]):
 
     @property
     def available(self) -> bool:
-        """Nicht verfügbar, wenn der Kanal fehlt oder der Coordinator die
-        instant_values-Daten als veraltet markiert hat (Staleness-Watchdog,
-        Konzept §5.3) - außer für Kanäle in `ALWAYS_AVAILABLE_WHEN_STALE`."""
+        """Unavailable if the channel is missing or the coordinator has
+        marked the instant_values data as stale (staleness watchdog,
+        concept §5.3) - except for channels in `ALWAYS_AVAILABLE_WHEN_STALE`."""
         if not super().available or self.resolved is None:
             return False
         if self._channel_name in ALWAYS_AVAILABLE_WHEN_STALE:
@@ -112,8 +112,8 @@ class PooldoseLiveEntity(CoordinatorEntity[PooldoseLiveCoordinator]):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Nur schreiben bei relevanter Änderung, Verfügbarkeitswechsel oder
-        fälligem Heartbeat - siehe Modul-Docstring."""
+        """Only write on a relevant change, an availability change, or a
+        due heartbeat - see the module docstring."""
         now = time.monotonic()
         avail = self.available
         resolved = self.resolved
@@ -131,17 +131,17 @@ class PooldoseLiveEntity(CoordinatorEntity[PooldoseLiveCoordinator]):
             self.async_write_ha_state()
 
     async def _async_write_value(self, value: Any) -> None:
-        """Schreibt einen neuen Wert für diesen Kanal (Konzept §5.1/§5.6).
+        """Writes a new value for this channel (concept §5.1/§5.6).
 
-        Kein optimistisches Setzen des lokalen Zustands - die Bestätigung
-        kommt mit dem nächsten WS-Tick (~4s) über den normalen Coordinator-
-        Update-Pfad, siehe pooldose_live.write für die Begründung.
+        No optimistic setting of local state - confirmation arrives with
+        the next WS tick (~4s) through the normal coordinator update path,
+        see pooldose_live.write for the reasoning.
         """
         resolved = self.resolved
         mapping = self.coordinator.mapping
         device_id = self.coordinator.last_snapshot_device_id
         if resolved is None or mapping is None or device_id is None:
-            raise HomeAssistantError("Kein aktueller Kanal-Zustand vorhanden")
+            raise HomeAssistantError("No current channel state available")
 
         session = async_get_clientsession(self.hass)
         try:
@@ -152,4 +152,4 @@ class PooldoseLiveEntity(CoordinatorEntity[PooldoseLiveCoordinator]):
         except WriteError as err:
             raise ServiceValidationError(str(err)) from err
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise HomeAssistantError(f"Schreiben fehlgeschlagen: {err}") from err
+            raise HomeAssistantError(f"Write failed: {err}") from err

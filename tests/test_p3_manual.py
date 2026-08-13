@@ -1,13 +1,13 @@
-"""Manuelle Verhaltenstests für P3 (Entprellung, Verfügbarkeit, Diagnostics).
+"""Manual behavioral tests for P3 (debouncing, availability, diagnostics).
 
-Gleiches Vorgehen wie test_p2_manual.py: kein regulärer pytest-Lauf möglich
+Same approach as test_p2_manual.py: a regular pytest run isn't possible
 (pytest-homeassistant-custom-component -> homeassistant.runner -> fcntl,
-Unix-only). Bare HomeAssistant()-Core-Objekt + MockConfigEntry, echte
-pooldose_live/HA-Klassen, `async_write_ha_state` wird für die Entity-Tests
-gestubbt (wir testen unsere eigene Entscheidungslogik, nicht HAs
-State-Machine-Schreibpfad - der ist bereits durch HA selbst getestet).
+Unix-only). Bare HomeAssistant() core object + MockConfigEntry, real
+pooldose_live/HA classes, `async_write_ha_state` is stubbed for the entity
+tests (we're testing our own decision logic, not HA's state machine write
+path - that's already tested by HA itself).
 
-Ausführen: python tests/test_p3_manual.py
+Run: python tests/test_p3_manual.py
 """
 
 from __future__ import annotations
@@ -45,12 +45,12 @@ PH_DATA = {
 
 
 def test_is_relevant_change() -> None:
-    assert _is_relevant_change(None, 7.1, 0.1) is True, "erster Wert ist immer relevant"
-    assert _is_relevant_change(7.1, 7.15, 0.1) is False, "unter Aufloesung -> nicht relevant"
-    assert _is_relevant_change(7.1, 7.3, 0.1) is True, "ueber Aufloesung -> relevant"
-    assert _is_relevant_change(True, False, None) is True, "bool-Wechsel immer relevant"
-    assert _is_relevant_change("a", "a", None) is False, "identischer String -> nicht relevant"
-    assert _is_relevant_change("a", "b", None) is True, "anderer String -> relevant"
+    assert _is_relevant_change(None, 7.1, 0.1) is True, "the first value is always relevant"
+    assert _is_relevant_change(7.1, 7.15, 0.1) is False, "below resolution -> not relevant"
+    assert _is_relevant_change(7.1, 7.3, 0.1) is True, "above resolution -> relevant"
+    assert _is_relevant_change(True, False, None) is True, "a bool flip is always relevant"
+    assert _is_relevant_change("a", "a", None) is False, "identical string -> not relevant"
+    assert _is_relevant_change("a", "b", None) is True, "different string -> relevant"
     print("Test is_relevant_change OK")
 
 
@@ -73,7 +73,7 @@ async def main() -> None:
     ))
     assert "ph" in coordinator.data
 
-    # --- Test: Diagnostics-Statistik -------------------------------------
+    # --- Test: diagnostics statistics --------------------------------------
     coordinator._handle_event(TransportEvent(kind="connected", t=0.0))
     coordinator._handle_event(TransportEvent(kind="watchdog", t=2.0, reason="test"))
     assert coordinator.stats["cycles"] == 1
@@ -82,37 +82,37 @@ async def main() -> None:
     assert coordinator.last_snapshot_device_id == "TESTSERIAL_DEVICE"
     assert coordinator.last_snapshot_raw is PH_DATA
     assert coordinator.last_known_standby is False, "alarm_system_standby=F -> False"
-    print("Test Diagnostics-Statistik OK")
+    print("Test diagnostics statistics OK")
 
-    # --- Test: Entity-Entprellung ------------------------------------------
+    # --- Test: entity debouncing --------------------------------------------
     entity = PooldoseLiveEntity(coordinator, "ph", EntityDescription(key="ph"))
     write_calls: list[int] = []
     entity.async_write_ha_state = lambda: write_calls.append(1)  # type: ignore[method-assign]
 
     entity._handle_coordinator_update()
-    assert len(write_calls) == 1, "erstes Update (Heartbeat=faellig) haette schreiben muessen"
+    assert len(write_calls) == 1, "the first update (heartbeat due) should have written"
 
-    # Identischer Wert, kein Heartbeat faellig -> kein Schreiben
+    # Identical value, no heartbeat due -> no write
     entity._handle_coordinator_update()
-    assert len(write_calls) == 1, "unveraenderter Wert haette NICHT schreiben duerfen"
+    assert len(write_calls) == 1, "an unchanged value should NOT have written"
 
-    # Aenderung unterhalb der Aufloesung (0.1) -> kein Schreiben
+    # Change below the resolution (0.1) -> no write
     coordinator.data["ph"].display = 7.12
     entity._handle_coordinator_update()
-    assert len(write_calls) == 1, "Aenderung unter Aufloesung haette NICHT schreiben duerfen"
+    assert len(write_calls) == 1, "a change below resolution should NOT have written"
 
-    # Aenderung oberhalb der Aufloesung -> Schreiben
+    # Change above the resolution -> write
     coordinator.data["ph"].display = 7.4
     entity._handle_coordinator_update()
-    assert len(write_calls) == 2, "Aenderung ueber Aufloesung haette schreiben muessen"
+    assert len(write_calls) == 2, "a change above resolution should have written"
 
-    # Heartbeat: Zeit zuruecksetzen, um faelligen Heartbeat zu simulieren
+    # Heartbeat: reset the time to simulate a due heartbeat
     entity._last_written_time -= HEARTBEAT_INTERVAL + 1
     entity._handle_coordinator_update()
-    assert len(write_calls) == 3, "faelliger Heartbeat haette schreiben muessen"
-    print("Test Entity-Entprellung (Aufloesung + Heartbeat) OK")
+    assert len(write_calls) == 3, "a due heartbeat should have written"
+    print("Test entity debouncing (resolution + heartbeat) OK")
 
-    # --- Test: Verfuegbarkeit + Standby-Ausnahme ----------------------------
+    # --- Test: availability + standby exception -----------------------------
     ph_entity = entity
     standby_entity = PooldoseLiveEntity(coordinator, "alarm_system_standby",
                                         EntityDescription(key="alarm_system_standby"))
@@ -122,14 +122,14 @@ async def main() -> None:
     assert standby_entity.available is True
 
     coordinator.is_stale = True
-    assert ph_entity.available is False, "normaler Kanal muss bei Staleness unavailable werden"
+    assert ph_entity.available is False, "a normal channel must become unavailable when stale"
     assert standby_entity.available is True, (
-        "alarm_system_standby soll auch bei Staleness verfuegbar bleiben (Konzept §8.4)"
+        "alarm_system_standby should remain available even when stale (concept §8.4)"
     )
     coordinator.is_stale = False
-    print("Test Verfuegbarkeit + Standby-Ausnahme OK")
+    print("Test availability + standby exception OK")
 
-    print("\nAlle P3-Verhaltenstests bestanden.")
+    print("\nAll P3 behavioral tests passed.")
 
 
 if __name__ == "__main__":

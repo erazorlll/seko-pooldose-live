@@ -1,14 +1,13 @@
-"""Manuelle Verhaltenstests für P4 (Schreibzugriff number/select/switch).
+"""Manual behavioral tests for P4 (write access for number/select/switch).
 
-Gleiches Vorgehen wie test_p2/p3_manual.py (siehe dort für die Begründung:
-pytest-homeassistant-custom-component blockiert unter Windows an fcntl).
+Same approach as test_p2/p3_manual.py (see there for the rationale:
+pytest-homeassistant-custom-component blocks on fcntl under Windows).
 
-Die HTTP-Ebene wird mit einer Fake-Session getestet - kein echter
-Netzwerkzugriff, erst recht keiner gegen ein reales Gerät (ein
-Schreibzugriff verändert laut websocker-spec.md ggf. echte
-Dosierparameter, das gehört nicht in einen automatisierten Testlauf).
+The HTTP layer is tested with a fake session - no real network access, and
+certainly none against a real device (a write can, per websocker-spec.md,
+change real dosing parameters, which has no place in an automated test run).
 
-Ausführen: python tests/test_p4_manual.py
+Run: python tests/test_p4_manual.py
 """
 
 from __future__ import annotations
@@ -91,16 +90,16 @@ async def main() -> None:
     assert coordinator.data["ph_target"].type == "number"
     assert coordinator.data["water_meter_unit"].type == "select"
     assert coordinator.data["pause_dosing"].type == "switch"
-    print("Test Typ-Erkennung (number/select/switch aus echten Rohdaten) OK")
+    print("Test type detection (number/select/switch from real raw data) OK")
 
-    # --- Test: dynamisches Hinzufuegen (gleiches Muster wie number.py etc.) -
+    # --- Test: dynamic addition (same pattern as number.py etc.) ---------
     for expected_type, name in [("number", "ph_target"), ("select", "water_meter_unit"),
                                 ("switch", "pause_dosing")]:
         matches = [n for n, rc in coordinator.data.items() if rc.type == expected_type]
-        assert name in matches, f"{name} haette als {expected_type} erkannt werden muessen"
-    print("Test dynamisches Hinzufuegen (alle drei neuen Typen) OK")
+        assert name in matches, f"{name} should have been detected as {expected_type}"
+    print("Test dynamic addition (all three new types) OK")
 
-    # --- Test: erfolgreicher Schreibvorgang -------------------------------
+    # --- Test: successful write --------------------------------------------
     entity = PooldoseLiveEntity(coordinator, "ph_target", EntityDescription(key="ph_target"))
     fake_session = FakeSession()
     entity_mod.async_get_clientsession = lambda hass: fake_session  # type: ignore[assignment]
@@ -115,30 +114,30 @@ async def main() -> None:
             "PDPR1H04AW100_FW539292_w_1ekeiqfat": [{"value": 7.4, "type": "NUMBER"}]
         }
     }, payload
-    print("Test erfolgreicher Schreibvorgang (korrektes Payload) OK")
+    print("Test successful write (correct payload) OK")
 
-    # --- Test: ungueltiger Wert -> ServiceValidationError, KEIN Request ----
+    # --- Test: invalid value -> ServiceValidationError, NO request ---------
     fake_session2 = FakeSession()
     entity_mod.async_get_clientsession = lambda hass: fake_session2  # type: ignore[assignment]
     try:
-        await entity._async_write_value(99.0)  # außerhalb [6, 8]
-        raise AssertionError("haette ServiceValidationError werfen muessen")
+        await entity._async_write_value(99.0)  # outside [6, 8]
+        raise AssertionError("should have raised ServiceValidationError")
     except ServiceValidationError:
         pass
-    assert not fake_session2.calls, "bei ungueltigem Wert darf KEIN Request rausgehen"
-    print("Test ungueltiger Wert (kein Request, ServiceValidationError) OK")
+    assert not fake_session2.calls, "an invalid value must NOT trigger a request"
+    print("Test invalid value (no request, ServiceValidationError) OK")
 
-    # --- Test: Netzwerkfehler -> HomeAssistantError ------------------------
+    # --- Test: network error -> HomeAssistantError --------------------------
     fake_session3 = FakeSession(raise_exc=aiohttp.ClientConnectionError("nope"))
     entity_mod.async_get_clientsession = lambda hass: fake_session3  # type: ignore[assignment]
     try:
         await entity._async_write_value(7.2)
-        raise AssertionError("haette HomeAssistantError werfen muessen")
+        raise AssertionError("should have raised HomeAssistantError")
     except HomeAssistantError as err:
         assert not isinstance(err, ServiceValidationError)
-    print("Test Netzwerkfehler (HomeAssistantError, nicht ServiceValidationError) OK")
+    print("Test network error (HomeAssistantError, not ServiceValidationError) OK")
 
-    print("\nAlle P4-Verhaltenstests bestanden.")
+    print("\nAll P4 behavioral tests passed.")
 
 
 if __name__ == "__main__":

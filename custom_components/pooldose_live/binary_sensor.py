@@ -1,7 +1,7 @@
-"""Binary-Sensor-Plattform für pooldose_live: dynamisch aus aufgelösten Kanälen.
+"""Binary sensor platform for pooldose_live: dynamic from resolved channels.
 
-Siehe sensor.py für die Begründung des dynamischen (statt statischen)
-Entity-Aufbaus.
+See sensor.py for the rationale behind the dynamic (rather than static)
+entity setup.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ async def async_setup_entry(
     config_entry: PooldoseLiveConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Richtet die Binary-Sensor-Plattform ein und hört auf neue Kanäle."""
+    """Sets up the binary sensor platform and listens for new channels."""
     coordinator = config_entry.runtime_data
     added: set[str] = set()
 
@@ -47,7 +47,7 @@ async def async_setup_entry(
 
 
 def _describe(name: str) -> BinarySensorEntityDescription:
-    # Siehe sensor.py: kein translation_key moeglich fuer dynamische Namen.
+    # See sensor.py: no translation_key possible for dynamic names.
     return BinarySensorEntityDescription(
         key=name,
         name=name.removeprefix("raw_").replace("_", " ").strip().capitalize(),
@@ -56,7 +56,7 @@ def _describe(name: str) -> BinarySensorEntityDescription:
 
 
 class PooldoseLiveBinarySensor(PooldoseLiveEntity, BinarySensorEntity):
-    """Binary-Sensor-Entity für einen aufgelösten pooldose_live-Kanal."""
+    """Binary sensor entity for a resolved pooldose_live channel."""
 
     @property
     def is_on(self) -> bool | None:

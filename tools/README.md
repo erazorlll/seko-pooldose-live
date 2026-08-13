@@ -1,66 +1,69 @@
-# tools/ws_probe.py — P0-Mitschnitt- und Messwerkzeug
+# tools/ws_probe.py — P0 recording and measurement tool
 
-Reines Diagnosewerkzeug für Phase P0 (Konzept §7/§8). Kein Teil der späteren
-Integration, aber die Transportschicht (eine Verbindung, Reassembly, Watchdog,
-Backoff) ist bewusst schon so gebaut, wie sie in P1 wiederverwendet werden soll.
+Pure diagnostic tool for phase P0 (concept §7/§8). Not part of the later
+integration, but the transport layer (one connection, reassembly, watchdog,
+backoff) is deliberately already built the way it's meant to be reused in
+P1.
 
-Voraussetzung: `aiohttp` (liegt bei den meisten HA-Umgebungen ohnehin vor).
+Requirement: `aiohttp` (already present in most HA environments anyway).
 
 ```bash
 pip install aiohttp
 ```
 
-## Aufzeichnen
+## Recording
 
 ```bash
 python tools/ws_probe.py record --host 192.168.0.74 --duration 1800 \
     --out recordings/session1.jsonl.gz --http-probe 60
 ```
 
-- `--duration` in Sekunden; ohne Angabe läuft es bis Strg+C.
-- `--out` schreibt JSON Lines, `.gz`-Endung komprimiert automatisch.
-  Ohne `--out` gibt es nur die Live-Statistik, keine Datei.
-- `--http-probe SEK` misst nebenher die HTTP-Antwortzeit des Geräts
-  (`GET /js_libs/params.js`, keine `getInstantValues`-Last).
-- Seriennummern werden per Default im Mitschnitt ersetzt (`--keep-serial` schaltet ab),
-  WLAN-Schlüssel werden immer redigiert. Ein Mitschnitt ist damit teilbar.
-- `recordings/` und `*.jsonl(.gz)` sind über `.gitignore` vom Repo ausgeschlossen —
-  das sind Rohdaten deines Geräts, kein Quellcode.
+- `--duration` in seconds; without it, runs until Ctrl+C.
+- `--out` writes JSON Lines, a `.gz` extension compresses automatically.
+  Without `--out`, you only get the live statistics, no file.
+- `--http-probe SEC` measures the device's HTTP response time on the side
+  (`GET /js_libs/params.js`, no `getInstantValues` load).
+- Serial numbers are redacted in the recording by default (`--keep-serial`
+  turns that off), WiFi keys are always redacted. That makes a recording
+  shareable.
+- `recordings/` and `*.jsonl(.gz)` are excluded from the repo via
+  `.gitignore` — that's raw data from your device, not source code.
 
-Am Ende der Aufzeichnung erscheint automatisch derselbe Bericht wie bei `report`.
+At the end of a recording, the same report as `report` appears
+automatically.
 
-## Auswerten
+## Analyzing
 
 ```bash
 python tools/ws_probe.py report recordings/session1.jsonl.gz
 ```
 
-Liefert: Frames/Bytes/Topics, hochgerechneten Tagesverkehr, Zyklen-Vollständigkeit,
-geschätzten Grundtakt mit Abweichung, längste Frame-Lücke, HTTP-Latenzverteilung,
-sowie — sofern mit Rohdaten aufgezeichnet (Vorgabe, `--no-raw` schaltet ab) — pro
-Kanal: `visible`/`alarm`-Zustand, ob `visible` sich je geändert hat, und wie oft sich
-jeder Kanal geändert hat (direkte Grundlage für die Entprellungsschwellen aus
-Konzept 5.6).
+Delivers: frames/bytes/topics, extrapolated daily traffic, cycle
+completeness, an estimated base tick with deviation, longest frame gap,
+HTTP latency distribution, and — if recorded with raw data (the default,
+`--no-raw` turns it off) — per channel: `visible`/`alarm` state, whether
+`visible` ever changed, and how often each channel changed (direct basis
+for the debouncing thresholds from concept 5.6).
 
-## Bezug zu den P0-Messfragen (Konzept §8)
+## Relation to the P0 measurement questions (concept §8)
 
-| Frage | Wie hier beantwortet |
+| Question | How it's answered here |
 |---|---|
-| Sendet das Gerät ohne Zuhörer? | Nicht direkt prüfbar (kein Mirror-Port). Näherung über `http_baseline.py`, siehe unten |
-| Tick-Ausfallrate bei 0/1/2 Clients | `record` parallel mit `--http-probe` je einmal starten, `Slot-Histogramm` im Bericht vergleichen |
-| HTTP-Antwortzeit mit/ohne WS-Listener | `--http-probe` mit und ohne parallel laufenden zweiten `record`-Prozess |
-| Reconnect-Verhalten (offset:1 sofort?) | `--watchdog` künstlich niedrig setzen, `Zyklen abgebrochen` beobachten |
-| Ändert sich `visible` zur Laufzeit? | Langer Mitschnitt (≥24h), `visible gewechselt` im Bericht |
-| Kommen Werte außerhalb des Ticks? | Während der Aufzeichnung am Gerät etwas verstellen, `frame_intervals` prüfen |
+| Does the device send without a listener? | Not directly testable (no mirror port). Approximated via `http_baseline.py`, see below |
+| Tick dropout rate with 0/1/2 clients | run `record` once in parallel with `--http-probe`, compare the `slot histogram` in the report |
+| HTTP response time with/without a WS listener | `--http-probe` with and without a second `record` process running in parallel |
+| Reconnect behavior (offset:1 immediately?) | set `--watchdog` artificially low, observe `cycles aborted` |
+| Does `visible` change at runtime? | a long recording (≥24h), `visible changed` in the report |
+| Do values arrive outside the tick? | change something on the device during the recording, check `frame_intervals` |
 
-Ergebnisse des ersten 11h-Laufs: [`docs/konzept.md` §8.2](../docs/konzept.md#82-ergebnisse-11h-mitschnitt-2026-08-12-1-client).
+Results from the first 11h run: [`docs/concept.md` §8.2](../docs/concept.md#82-results-11h-recording-2026-08-12-1-client).
 
-## tools/http_baseline.py — Vergleichsmessung ohne WS-Client (Konzept §10)
+## tools/http_baseline.py — comparison measurement without a WS client (concept §10)
 
-Beantwortet die wichtigste offene Frage nach der 11h-WS-Messung: sind die dort
-gefundenen mehrminütigen `instant_values`-Aussetzer durch unseren eigenen
-WS-Zuhörer verursacht, oder geräteinhärent? Pollt ausschließlich über die
-HTTP-API (`POST /api/v1/DWI/getInstantValues`), Port 1334 bleibt unberührt.
+Answers the most important open question after the 11h WS measurement: are
+the multi-minute `instant_values` dropouts found there caused by our own WS
+listening, or are they device-inherent? Polls exclusively over the HTTP API
+(`POST /api/v1/DWI/getInstantValues`), port 1334 stays untouched.
 
 ```bash
 python tools/http_baseline.py record --host 192.168.0.74 --interval 20 \
@@ -68,8 +71,8 @@ python tools/http_baseline.py record --host 192.168.0.74 --interval 20 \
 python tools/http_baseline.py report recordings/http_baseline.jsonl.gz
 ```
 
-Erkennt "eingefrorene Serien": aufeinanderfolgende Polls mit identischem
-Hash über alle sichtbaren `current`-Werte. Bei kurzen Intervallen (< 2×
-Gerätetakt, ~4,2s) sind kurze Serien durch Polling/Takt-Aliasing zu erwarten
-und kein Befund — erst Serien in der Größenordnung von Minuten sind
-aussagekräftig im Vergleich zu den WS-Aussetzern (bis 393s, siehe Konzept §8.2).
+Detects "frozen runs": consecutive polls with an identical hash across all
+visible `current` values. At short intervals (< 2× the device tick, ~4.2s),
+short runs are expected from polling/tick aliasing and aren't a finding —
+only runs on the order of minutes are meaningful compared to the WS
+dropouts (up to 393s, see concept §8.2).

@@ -4,7 +4,7 @@ on:
   push:
   pull_request:
   schedule:
-    - cron: "0 3 * * 1"  # woechentlich - faengt Drift durch neue HACS/hassfest-Regeln ab
+    - cron: "0 3 * * 1"  # weekly - catches drift from new HACS/hassfest rules
   workflow_dispatch:
 
 jobs:
@@ -35,14 +35,14 @@ jobs:
       - run: pip install -e .
       - run: pip install pytest homeassistant pytest-homeassistant-custom-component
 
-      # Reine Bibliothekslogik, kein HA-Fixture-Overhead noetig.
-      - name: pooldose_live-Bibliothekstests
+      # Pure library logic, no HA fixture overhead needed.
+      - name: pooldose_live library tests
         run: python -m pytest tests/test_write.py tests/test_vendor_sync.py -v
 
-      # Manuelle Skripte statt pytest-Fixtures - siehe README/tests/test_p2_manual.py
-      # fuer die Windows-fcntl-Begruendung. Laeuft hier auf Linux zwar ohne das
-      # konkrete Problem, bleibt aber bewusst dasselbe Skript wie lokal getestet.
-      - name: HA-Integrationstests (P2-P5)
+      # Manual scripts instead of pytest fixtures - see README/tests/test_p2_manual.py
+      # for the Windows fcntl rationale. Runs here on Linux without that specific
+      # problem, but deliberately stays the same script as tested locally.
+      - name: HA integration tests (P2-P5)
         run: |
           for f in tests/test_p2_manual.py tests/test_p3_manual.py tests/test_p4_manual.py tests/test_p5_manual.py; do
             echo "=== $f ==="

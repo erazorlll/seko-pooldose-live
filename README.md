@@ -1,152 +1,155 @@
 # seko-pooldose-live
 
-Home-Assistant-Integration (HACS) für SEKO PoolDose mit **Live-Daten über den lokalen
-WebSocket** des Geräts statt HTTP-Polling.
+Home Assistant integration (HACS) for SEKO PoolDose with **live data over the
+local WebSocket** instead of HTTP polling.
 
-Zielgerät: SEKO PoolDose Double Spa (`PDPR1H04AW100`, FW `539292`).
+Target device: SEKO PoolDose Double Spa (`PDPR1H04AW100`, FW `539292`).
 
-Status: **P6 — HACS-Konformität, echt installierbar.** P0–P5 sind abgeschlossen
-(Schreibzugriff noch nicht live gegen das echte Gerät getestet), siehe
-[docs/konzept.md](docs/konzept.md). Optional bleibt nur noch P7 (WS-Schreibformat
-erforschen, bewusst zurückhaltend).
+Status: **P6 — HACS-compliant, actually installable.** P0–P5 are complete
+(write access not yet tested live against the real device), see
+[docs/concept.md](docs/concept.md). Only P7 remains, optionally (exploring the
+WS write format, deliberately cautious).
 
-## Installation über HACS
+## Installing via HACS
 
-1. HACS → Integrationen → ⋮ → Benutzerdefinierte Repositories
-2. Dieses Repo als Typ „Integration" hinzufügen
-3. „SEKO PoolDose (Live)" installieren, Home Assistant neu starten
-4. Einstellungen → Geräte & Dienste → Integration hinzufügen → „SEKO PoolDose (Live)"
+1. HACS → Integrations → ⋮ → Custom repositories
+2. Add this repo as type "Integration"
+3. Install "SEKO PoolDose (Live)", restart Home Assistant
+4. Settings → Devices & Services → Add Integration → "SEKO PoolDose (Live)"
 
-Self-contained — `custom_components/pooldose_live/` bringt die Bibliothek
-vendort mit (`vendor/pooldose_live/`), kein separates `pip install` nötig.
+Self-contained — `custom_components/pooldose_live/` vendors the library
+(`vendor/pooldose_live/`), no separate `pip install` needed.
 
-## Warum
+## Why
 
-Die offizielle HA-Integration (`pooldose`, Bibliothek `python-pooldose`) pollt alle
-600 s eine HTTP-API. Das Gerät pusht dieselben Daten von sich aus im ~4,2-s-Takt über
-`ws://<host>:1334/` — ohne Authentifizierung, ohne Subscribe-Frame. Zuhören statt
-fragen bringt in der Praxis Faktor ~40 in der Aktualität (real gemessen, siehe
-Konzept §8.2 — der anfangs theoretisch angenommene Faktor ~143 hielt der Messung
-nicht stand) und beseitigt nebenbei eine Reihe konkreter Schwächen der heutigen
-Lösung.
+The official HA integration (`pooldose`, library `python-pooldose`) polls an
+HTTP API every 600 s. The device pushes the same data on its own over
+`ws://<host>:1334/` at a ~4.2 s tick — no authentication, no subscribe frame.
+Listening instead of asking brings a real-world factor of ~40 in freshness
+(measured, see concept §8.2 — the initial theoretical factor of ~143 didn't
+survive the measurement) and incidentally fixes a number of concrete
+weaknesses in the current solution.
 
-## Paket `pooldose_live` (P1)
+## Package `pooldose_live` (P1)
 
 ```bash
 pip install -e .
 python -m pooldose_live.probe --host 192.168.0.74
 ```
 
-Verbindet sich, leitet Modell/FW direkt aus den Daten-Keys ab (kein HTTP-Call
-nötig), lädt die passende Mapping-Tabelle und zeigt die aufgelösten Kanäle —
-danach live jede Wertänderung. `--once` beendet nach der ersten Tabelle,
-`--show-invisible` zeigt auch `visible: false`-Kanäle.
+Connects, derives model/firmware directly from the data keys (no HTTP call
+needed), loads the matching mapping table, and shows the resolved channels —
+then every value change live. `--once` exits after the first table,
+`--show-invisible` also shows `visible: false` channels.
 
-| Modul | Zweck |
+| Module | Purpose |
 |---|---|
-| `transport.py` | Eine WS-Verbindung, Reassembly, zwei Watchdogs (Verbindung + `instant_values`-Staleness, siehe Konzept §5.3), Backoff |
-| `channels.py` | Rohes devicedata-Dict → `Channel`-Objekte (Label-Dekodierung, Einheiten, comboitems) |
-| `mapping.py` | Dreistufiger Fallback: exaktes Modell+FW → gleiches Modell/andere FW → Raw-Modus (Konzept §5.5) |
-| `mappings/` | Vendorte Mapping-Tabellen aus `python-pooldose` (MIT), siehe `ATTRIBUTION.md` |
-| `probe.py` | CLI-Entry-Point für P1 |
-| `write.py` | Schreibzugriff (P4): Validierung + `POST setInstantValues`, kein Vorab-GET |
+| `transport.py` | One WS connection, reassembly, two watchdogs (connection + `instant_values` staleness, see concept §5.3), backoff |
+| `channels.py` | Raw devicedata dict → `Channel` objects (label decoding, units, comboitems) |
+| `mapping.py` | Three-tier fallback: exact model+FW → same model/different FW → raw mode (concept §5.5) |
+| `mappings/` | Vendored mapping tables from `python-pooldose` (MIT), see `ATTRIBUTION.md` |
+| `probe.py` | CLI entry point for P1 |
+| `write.py` | Write access (P4): validation + `POST setInstantValues`, no pre-emptive GET |
 
-## HA-Integration `custom_components/pooldose_live/` (P2)
+## HA integration `custom_components/pooldose_live/` (P2)
 
-Read-only: `sensor` + `binary_sensor`, dynamisch aus den aufgelösten Kanälen
-erzeugt (nicht aus einer festen Tabelle wie die Core-Integration — die
-Kanalmenge steht erst zur Laufzeit fest, je nach Mapping-Treffer oder
-Raw-Fallback). `visible: false`-Kanäle erzeugen keine Entity (Konzept B3),
-das `alarm`-Flag landet als Attribut am Sensor (Konzept B4).
+Read-only: `sensor` + `binary_sensor`, created dynamically from the resolved
+channels (not from a fixed table like the core integration — the set of
+channels is only known at runtime, depending on a mapping hit or the raw
+fallback). `visible: false` channels don't create an entity (concept B3), the
+`alarm` flag ends up as an attribute on the sensor (concept B4).
 
-**Setup wartet nicht auf Live-Daten:** Der Config Flow prüft nur, ob der
-WebSocket-Port antwortet (10 s Timeout) — er wartet nicht auf einen
-vollständigen `instant_values`-Zyklus. Das Gerät kann laut Konzept §8.2/§8.3
-legitim mehrere Minuten schweigen; ein Setup, das darauf wartet, würde
-regelmäßig grundlos fehlschlagen. Details in Konzept §5.7.
+**Setup doesn't wait for live data:** the config flow only checks whether the
+WebSocket port responds (10 s timeout) — it does not wait for a complete
+`instant_values` cycle. Per concept §8.2/§8.3 the device can legitimately stay
+silent for several minutes; a setup step that waited for that would fail for
+no reason on a regular basis. Details in concept §5.7.
 
-## Entprellung, Verfügbarkeit, Diagnostics (P3)
+## Debouncing, availability, diagnostics (P3)
 
-- **Entprellung** (`entity.py`): pro Entity nur schreiben bei relevanter Änderung
-  (resolution-bewusst bei Zahlen) oder alle 5 Minuten (Heartbeat), zusätzlich zum
-  groben Coordinator-weiten Gleichheits-Check aus P2. Ohne das würde jede der
-  ~40–70 Entities bei jeder Änderung eines beliebigen Kanals neu schreiben —
-  siehe Konzept §5.6/§8.2 für die Zahlen (422.600 vs. 6.200 Writes/Tag).
-- **Verfügbarkeit**: Entities werden `unavailable`, wenn der Staleness-Watchdog
-  (Konzept §5.3) anschlägt — außer `alarm_system_standby`, das bewusst auch
-  während Staleness sichtbar bleibt, weil es selbst das wahrscheinlichste
-  Diagnose-Signal für die Ursache ist (Konzept §8.4).
-- **`diagnostics.py`**: letzter Roh-Snapshot (Seriennummer redigiert) plus
-  Sitzungsstatistik (Reconnects, längste Lücke, Mapping-Status/Abdeckung) —
-  exportierbar direkt aus HA, dasselbe Material wie Issue #20 bei
-  lmaertin/python-pooldose, ohne CLI-Gefummel.
+- **Debouncing** (`entity.py`): each entity only writes state on a relevant
+  change (resolution-aware for numbers) or every 5 minutes (heartbeat), on
+  top of the coarse coordinator-wide equality check from P2. Without this,
+  every one of the ~40–70 entities would rewrite state on any single channel
+  changing — see concept §5.6/§8.2 for the numbers (422,600 vs. 6,200
+  writes/day).
+- **Availability**: entities become `unavailable` when the staleness watchdog
+  (concept §5.3) trips — except `alarm_system_standby`, which deliberately
+  stays visible during staleness because it's itself the most likely
+  diagnostic signal for the cause (concept §8.4).
+- **`diagnostics.py`**: last raw snapshot (serial number redacted) plus
+  session statistics (reconnects, longest gap, mapping status/coverage) —
+  exportable directly from HA, the same material that issue #20 at
+  lmaertin/python-pooldose grew out of, without CLI fiddling.
 
-## Schreibzugriff (P4)
+## Write access (P4)
 
-`number` + `select` + `switch`, dynamisch wie die read-only-Plattformen. Kein
-Vorab-GET vor dem Schreiben (vermeidet B8) — Validierung (Bereich/Schrittweite/
-Optionen) läuft gegen den zuletzt empfangenen WS-Snapshot. Bestätigung kommt mit
-dem nächsten Tick (~4s) über den normalen Coordinator-Pfad, kein optimistisches
-Setzen des Anzeigewerts. `switch` gibt es nur bei echtem Mapping-Treffer — im
-Raw-Modus werden bare Booleans als `binary_sensor` klassifiziert, nicht als
-`switch` (unklar, ob wirklich schreibbar).
+`number` + `select` + `switch`, dynamic like the read-only platforms. No
+pre-emptive GET before writing (avoids B8) — validation (range/step/options)
+runs against the most recently received WS snapshot. Confirmation arrives
+with the next tick (~4s) through the normal coordinator path, no optimistic
+setting of the displayed value. `switch` only exists for an actual mapping
+hit — in raw mode, bare booleans are classified as `binary_sensor`, not
+`switch` (unclear whether they're actually writable).
 
-**Noch nicht live gegen das echte Gerät getestet** — bewusst, siehe Konzept §5.9:
-Encoding/Validierung sind vollständig offline verifiziert, ein erster echter
-Schreibversuch sollte aber gezielt und mit einem risikoarmen Wert erfolgen, nicht
-einfach automatisiert nebenbei.
+**Not yet tested live against the real device** — deliberately, see concept
+§5.9: encoding/validation are fully verified offline, but a first real write
+attempt should happen deliberately with a low-risk value, not just
+automatically along the way.
 
-## Repair-Issues, Übersetzungen (P5)
+## Repair issues, translations (P5)
 
-Zeigt in HA (Einstellungen → System → Reparaturen) sichtbar an, wenn die
-Namensauflösung nicht optimal ist:
+Visibly surfaces in HA (Settings → System → Repairs) when name resolution
+isn't optimal:
 
-- **FW-Fallback**: exaktes Modell, aber keine passende Firmware-Mapping-Datei
-  gefunden — ein anderer FW-Stand desselben Modells wurde verwendet.
-- **Raw-Modus**: gar kein Mapping für dieses Modell gefunden — alle Kanäle laufen
-  unter generischen `raw_*`-Namen.
+- **FW fallback**: exact model match, but no matching firmware mapping file
+  found — a different FW revision of the same model was used.
+- **Raw mode**: no mapping found for this model at all — all channels run
+  under generic `raw_*` names.
 
-Beide Fälle sind funktionsfähig (Konzept-Kernidee gegen B2, kein Totalausfall wie
-bei der Core-Integration), aber der Nutzer soll es sehen und weiß, wie er ein
-Mapping beisteuern kann (derselbe Weg wie Issue #20 bei lmaertin/python-pooldose).
-Je Gerät ein eigenes Issue, wird beim Entladen des Config-Entry wieder entfernt.
-Übersetzt (de/en), wie der Config Flow.
+Both cases are functional (the concept's core idea against B2, no total
+outage like the core integration), but the user should see it and know how to
+contribute a mapping (the same path as issue #20 at lmaertin/python-pooldose).
+One issue per device, removed again when the config entry is unloaded.
+Translated (de/en), like the config flow.
 
-Tests: `tests/test_p2_manual.py` … `test_p5_manual.py` — kein regulärer
-`pytest`-Lauf für die HA-Tests, da `pytest-homeassistant-custom-component` unter
-Windows an `homeassistant.runner` (braucht `fcntl`, Unix-only) scheitert.
-Stattdessen eigenständige Skripte mit echten HA-Kernklassen
-(`python tests/test_p2_manual.py` usw.). `tests/test_write.py` ist reine
-Bibliothekslogik ohne HA-Abhängigkeit und läuft regulär über
-`python -m pytest tests/test_write.py -p no:homeassistant` (das `-p no:homeassistant`
-deaktiviert nur das global registrierte, unter Windows blockierte Plugin). Auf
-einer echten (Linux-)HA-Instanz sollten die manuellen Skripte durch reguläre
-pytest-Fixtures ersetzt/ergänzt werden.
+Tests: `tests/test_p2_manual.py` … `test_p5_manual.py` — no regular `pytest`
+run for the HA tests, since `pytest-homeassistant-custom-component` fails on
+Windows on `homeassistant.runner` (needs `fcntl`, Unix-only). Instead,
+standalone scripts using real HA core classes (`python tests/test_p2_manual.py`
+etc.). `tests/test_write.py` is pure library logic without an HA dependency
+and runs regularly via
+`python -m pytest tests/test_write.py -p no:homeassistant` (the
+`-p no:homeassistant` only disables the globally registered plugin that's
+blocked on Windows). On a real (Linux) HA instance, the manual scripts should
+be replaced/supplemented by regular pytest fixtures.
 
-## HACS-Konformität (P6)
+## HACS compliance (P6)
 
-- **Vendoring statt PyPI**: `custom_components/pooldose_live/vendor/pooldose_live/`
-  ist eine 1:1-Kopie von `src/pooldose_live/` (ohne `probe.py`, reines CLI-Tooling).
-  Löst die vorherige „Bekannte Lücke" — eine über HACS installierte Komponente war
-  bis P6 nicht lauffähig, weil die eigentliche Transport-/Decoder-/Mapping-Logik
-  separat `pip install`-iert werden musste. `manifest.json`s `"requirements": []`
-  ist jetzt tatsächlich korrekt, nicht nur ein Platzhalter.
+- **Vendoring instead of PyPI**: `custom_components/pooldose_live/vendor/pooldose_live/`
+  is a 1:1 copy of `src/pooldose_live/` (minus `probe.py`, pure P1 CLI
+  tooling). Fixes the previous "known gap" — a component installed via HACS
+  wasn't runnable before P6, because the actual transport/decoder/mapping
+  logic had to be `pip install`-ed separately. `manifest.json`'s
+  `"requirements": []` is now actually correct, not just a placeholder.
   Details: [`custom_components/pooldose_live/vendor/README.md`](custom_components/pooldose_live/vendor/README.md).
-- **Sync-Check**: `tools/check_vendor_sync.py` (auch `tests/test_vendor_sync.py`,
-  Teil der CI) stellt sicher, dass die vendorte Kopie nicht von `src/pooldose_live/`
-  abweicht. Nach Änderungen an der Bibliothek: `python tools/sync_vendor.py`.
-- **CI** (`.github/workflows/validate.yml`): `hacs/action`, `hassfest`, plus alle
-  eigenen Tests — läuft auf Linux-Runnern, wo das unter Windows blockierte
-  `pytest-homeassistant-custom-component`-Plugin problemlos lädt.
-- `hacs.json`, `LICENSE` (MIT), Versionsbump auf `0.2.0` (Paket + Manifest synchron).
+- **Sync check**: `tools/check_vendor_sync.py` (also `tests/test_vendor_sync.py`,
+  part of CI) ensures the vendored copy doesn't drift from
+  `src/pooldose_live/`. After changing the library:
+  `python tools/sync_vendor.py`.
+- **CI** (`.github/workflows/validate.yml`): `hacs/action`, `hassfest`, plus
+  all of our own tests — runs on Linux runners, where the plugin blocked on
+  Windows loads without issue.
+- `hacs.json`, `LICENSE` (MIT), version bump to `0.2.0` (package + manifest
+  in sync).
 
-## Dokumente
+## Documents
 
-- [`websocker-spec.md`](websocker-spec.md) — Reverse-Engineering-Ergebnisse vom echten Gerät
-- [`docs/konzept.md`](docs/konzept.md) — Analyse der bestehenden Lösungen, Befunde, Architekturkonzept, Messergebnisse, Phasenplan
-- [`tools/README.md`](tools/README.md) — P0-Diagnosewerkzeuge (Mitschnitt, HTTP-Basislinie)
+- [`websocker-spec.md`](websocker-spec.md) — reverse-engineering results from the real device
+- [`docs/concept.md`](docs/concept.md) — analysis of existing solutions, findings, architecture concept, measurement results, phase plan
+- [`tools/README.md`](tools/README.md) — P0 diagnostic tools (recording, HTTP baseline)
 
 ## Credits
 
-Die Mapping-Tabellen (Hash-Key → sprechender Name) stammen aus
+The mapping tables (hash key → readable name) come from
 [lmaertin/python-pooldose](https://github.com/lmaertin/python-pooldose) (MIT).

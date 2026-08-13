@@ -1,9 +1,8 @@
-"""Number-Plattform für pooldose_live: dynamisch aus aufgelösten Kanälen.
+"""Number platform for pooldose_live: dynamic from resolved channels.
 
-Schreibend (P4) - siehe entity.py._async_write_value() und
-pooldose_live.write für Validierung/HTTP-Mechanik. Grenzen/Schrittweite
-kommen aus dem zuletzt empfangenen Snapshot (absMin/absMax/resolution),
-nicht aus einer statischen Tabelle.
+Writable (P4) - see entity.py._async_write_value() and pooldose_live.write
+for validation/HTTP mechanics. Bounds/step come from the most recently
+received snapshot (absMin/absMax/resolution), not a static table.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .coordinator import PooldoseLiveConfigEntry, PooldoseLiveCoordinator
 from .entity import PooldoseLiveEntity
 
-PARALLEL_UPDATES = 1  # Schreibvorgänge nicht parallel - schont die Verbindung
+PARALLEL_UPDATES = 1  # Writes not in parallel - easier on the connection
 
 
 async def async_setup_entry(
@@ -23,7 +22,7 @@ async def async_setup_entry(
     config_entry: PooldoseLiveConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Richtet die Number-Plattform ein und hört auf neue Kanäle."""
+    """Sets up the number platform and listens for new channels."""
     coordinator = config_entry.runtime_data
     added: set[str] = set()
 
@@ -46,7 +45,7 @@ async def async_setup_entry(
 
 
 def _describe(name: str) -> NumberEntityDescription:
-    # Siehe sensor.py: kein translation_key für dynamische Namen möglich.
+    # See sensor.py: no translation_key possible for dynamic names.
     return NumberEntityDescription(
         key=name,
         name=name.removeprefix("raw_").replace("_", " ").strip().capitalize(),
@@ -55,7 +54,7 @@ def _describe(name: str) -> NumberEntityDescription:
 
 
 class PooldoseLiveNumber(PooldoseLiveEntity, NumberEntity):
-    """Number-Entity für einen aufgelösten pooldose_live-Kanal."""
+    """Number entity for a resolved pooldose_live channel."""
 
     @property
     def native_value(self) -> float | None:

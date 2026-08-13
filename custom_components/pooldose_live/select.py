@@ -1,9 +1,8 @@
-"""Select-Plattform für pooldose_live: dynamisch aus aufgelösten Kanälen.
+"""Select platform for pooldose_live: dynamic from resolved channels.
 
-Schreibend (P4). Die Optionsliste kommt aus `channel.options` - generisch
-aus den `comboitems` des zuletzt empfangenen Snapshots dekodiert
-(channels.py), nicht aus einer Mapping-Tabelle. Funktioniert deshalb auch
-im Raw-Modus.
+Writable (P4). The option list comes from `channel.options` - decoded
+generically from the `comboitems` of the most recently received snapshot
+(channels.py), not from a mapping table. Works in raw mode too, therefore.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ async def async_setup_entry(
     config_entry: PooldoseLiveConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Richtet die Select-Plattform ein und hört auf neue Kanäle."""
+    """Sets up the select platform and listens for new channels."""
     coordinator = config_entry.runtime_data
     added: set[str] = set()
 
@@ -54,7 +53,7 @@ def _describe(name: str) -> SelectEntityDescription:
 
 
 class PooldoseLiveSelect(PooldoseLiveEntity, SelectEntity):
-    """Select-Entity für einen aufgelösten pooldose_live-Kanal."""
+    """Select entity for a resolved pooldose_live channel."""
 
     @property
     def current_option(self) -> str | None:

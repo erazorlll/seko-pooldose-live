@@ -1,30 +1,29 @@
 #!/usr/bin/env python3
-"""HTTP-Only-Basislinie (P0, Konzept §10): Vergleichsmessung ohne WS-Client.
+"""HTTP-only baseline (P0, concept §10): comparison measurement without a WS client.
 
-Die wichtigste offene Frage nach der 11h-WS-Messung (siehe docs/konzept.md
-§8.2): Die dort gefundenen, wiederholten mehrminütigen instant_values-
-Aussetzer bei intakter Verbindung — sind die durch unseren eigenen
-WebSocket-Zuhörer verursacht, oder passieren sie auch ganz ohne WS-Client?
+The most important open question after the 11h WS measurement (see
+docs/concept.md §8.2): the repeated multi-minute instant_values dropouts
+found there, with an intact connection - are they caused by our own
+WebSocket listener, or do they happen even with no WS client at all?
 
-Ein echtes "niemand ist verbunden"-Experiment ist über WebSocket strukturell
-nicht möglich: ohne offene Verbindung gibt es keinen Frame, den man
-beobachten könnte. Diese Basislinie nähert sich der Frage stattdessen so an:
+A true "nobody is connected" experiment isn't structurally possible over
+WebSocket: without an open connection there's no frame to observe. This
+baseline instead approaches the question like this:
 
-    Sie pollt ausschließlich über die vorhandene HTTP-API
-    (POST /api/v1/DWI/getInstantValues, wie die heutige offizielle
-    Integration es tut), in einem moderaten Intervall, OHNE JE
-    Port 1334 zu berühren. Danach wird geprüft, ob die Werte dabei
-    ebenso über mehrere Minuten hinweg exakt eingefroren bleiben wie
-    im WS-Stream.
+    It polls exclusively via the existing HTTP API
+    (POST /api/v1/DWI/getInstantValues, as today's official integration
+    does), at a moderate interval, WITHOUT EVER touching port 1334.
+    Afterward, it's checked whether the values freeze exactly the same
+    way over multiple minutes as in the WS stream.
 
-    - Friert die HTTP-Basislinie NIE ein: spricht dafür, dass unser
-      WS-Zuhören selbst der Stressor ist.
-    - Friert sie GENAUSO ein: spricht dafür, dass die Aussetzer
-      geräteinhärent sind, unabhängig vom Client.
+    - If the HTTP baseline NEVER freezes: suggests our WS listening
+      itself is the stressor.
+    - If it freezes JUST THE SAME: suggests the dropouts are inherent
+      to the device, independent of the client.
 
-Kein Beweis in beide Richtungen (Polling ist auch Last, nur seltener und
-anderer Art als ein offener WS-Socket) - aber die beste praktisch mögliche
-Annäherung ohne Zugriff auf einen Mirror-Port am Switch/Router.
+No proof in either direction (polling is also load, just less frequent and
+of a different kind than an open WS socket) - but the best practically
+possible approximation without access to a mirror port on the switch/router.
 """
 
 from __future__ import annotations
@@ -46,9 +45,9 @@ import aiohttp
 DEFAULT_INTERVAL = 20.0
 SENSITIVE_KEYS = {"key", "psk", "password", "passwd", "pwd", "wifi_key", "ap_key", "secret"}
 
-# Bekannte Kanäle dieses Modells (aus dem Mapping übernommen) für eine
-# lesbare Stichprobe im Bericht. Der Freeze-Test selbst braucht das nicht -
-# der läuft über den Hash aller sichtbaren Werte.
+# Known channels of this model (taken from the mapping) for a readable
+# sample in the report. The freeze test itself doesn't need this - it runs
+# over the hash of all visible values.
 SAMPLE_PREFIX = "PDPR1H04AW100_FW539292_"
 SAMPLE_CHANNELS = {
     "ph": "w_1ekeigkin",
@@ -67,11 +66,11 @@ def _redact(obj: Any) -> Any:
 
 
 def value_signature(raw: dict[str, Any]) -> tuple[str, dict[str, Any], int]:
-    """Stabiler Hash über alle sichtbaren `current`-Werte + Kanalzahl.
+    """Stable hash over all visible `current` values + channel count.
 
-    `visible: false`-Kanäle fließen bewusst nicht ein (siehe Konzept B3) -
-    ein nicht angeschlossener Kanal, der ohnehin nie zuverlässig wechselt,
-    soll die Freeze-Erkennung nicht verwässern.
+    `visible: false` channels are deliberately excluded (see concept B3) -
+    a disconnected channel that never reliably changes anyway shouldn't
+    dilute freeze detection.
     """
     flat: dict[str, Any] = {}
     for serial, payload in (raw.get("devicedata") or {}).items():
@@ -144,12 +143,12 @@ async def run_record(args: argparse.Namespace) -> int:
     t0 = time.monotonic()
     deadline = t0 + args.duration if args.duration else None
 
-    print(f"HTTP-Basislinie {url}   Intervall {args.interval:.0f}s   "
-          f"Dauer {'unbegrenzt' if not args.duration else str(args.duration) + 's'}")
-    print("Port 1334 (WebSocket) wird in diesem Lauf nicht angefasst.")
+    print(f"HTTP baseline {url}   Interval {args.interval:.0f}s   "
+          f"Duration {'unlimited' if not args.duration else str(args.duration) + 's'}")
+    print("Port 1334 (WebSocket) is not touched during this run.")
     if rec.path:
-        print(f"Ausgabe: {rec.path}")
-    print("Abbruch mit Strg+C\n")
+        print(f"Output: {rec.path}")
+    print("Stop with Ctrl+C\n")
 
     polls = errors = 0
     last_hash: str | None = None
@@ -171,8 +170,8 @@ async def run_record(args: argparse.Namespace) -> int:
                 if err is not None or data is None:
                     errors += 1
                     rec.write(t0, ev="error", error=err, status=status, ms=round(ms, 1))
-                    print(f"[{_clock()}] {t_rel:8.0f}s  Fehler: {err}")
-                    last_hash = None  # Serie unterbrochen, nicht als Freeze werten
+                    print(f"[{_clock()}] {t_rel:8.0f}s  Error: {err}")
+                    last_hash = None  # series interrupted, not counted as a freeze
                     streak_len = 0
                 else:
                     latencies.append(ms)
@@ -191,7 +190,7 @@ async def run_record(args: argparse.Namespace) -> int:
                         last_hash = digest
 
                     if polls % 10 == 0 or streak_len >= 3:
-                        note = f"  eingefroren seit {streak_len} Polls" if streak_len >= 3 else ""
+                        note = f"  frozen for {streak_len} polls" if streak_len >= 3 else ""
                         print(f"[{_clock()}] {t_rel:8.0f}s  Poll #{polls:4d}  "
                               f"{ms:6.0f}ms  hash={digest}{note}")
 
@@ -206,49 +205,49 @@ async def run_record(args: argparse.Namespace) -> int:
     print()
     print_report(polls, errors, latencies, frozen_events, args.interval, time.monotonic() - t0)
     if rec.path:
-        print(f"\nMitschnitt: {rec.path}")
-        print(f"Auswertung: python tools/http_baseline.py report {rec.path}")
+        print(f"\nRecording: {rec.path}")
+        print(f"Report: python tools/http_baseline.py report {rec.path}")
     return 0
 
 
 def print_report(polls: int, errors: int, latencies: list[float],
                  frozen_events: list[tuple[float, float, int]], interval: float, duration: float) -> None:
     print("=" * 66)
-    print("HTTP-BASISLINIE — MESSBERICHT")
+    print("HTTP BASELINE - MEASUREMENT REPORT")
     print("=" * 66)
-    print(f"Dauer                 {duration:.0f}s ({duration/60:.1f} min)")
-    print(f"Polls                 {polls}   Fehler {errors}")
+    print(f"Duration              {duration:.0f}s ({duration/60:.1f} min)")
+    print(f"Polls                 {polls}   Errors {errors}")
     if latencies:
         s = sorted(latencies)
         median = s[len(s)//2]
         p95 = s[int(len(s)*0.95)] if len(s) > 1 else s[0]
-        print(f"Latenz                median {median:.0f}ms   p95 {p95:.0f}ms   max {max(s):.0f}ms")
+        print(f"Latency               median {median:.0f}ms   p95 {p95:.0f}ms   max {max(s):.0f}ms")
     print()
     if not frozen_events:
-        print("Keine eingefrorenen Serien gefunden (>=2 aufeinanderfolgende Polls "
-              "mit identischem Werte-Hash).")
-        print("→ Deutet darauf hin, dass der Aussetzer aus der WS-Messung NICHT")
-        print("  auch ohne WS-Verbindung auftritt — spricht für einen Zusammenhang")
-        print("  mit dem WS-Zuhören selbst.")
+        print("No frozen series found (>=2 consecutive polls "
+              "with an identical value hash).")
+        print("-> Suggests that the dropout from the WS measurement does NOT")
+        print("  also occur without a WS connection - points to a link")
+        print("  with WS listening itself.")
     else:
         total_frozen = sum(d for _, d, _ in frozen_events)
-        print(f"Eingefrorene Serien   {len(frozen_events)}   "
-              f"Summe {total_frozen:.0f}s ({total_frozen/60:.1f} min, "
-              f"{total_frozen/duration*100:.1f}% der Laufzeit)" if duration else "")
-        print("Längste Serien:")
+        print(f"Frozen series         {len(frozen_events)}   "
+              f"Total {total_frozen:.0f}s ({total_frozen/60:.1f} min, "
+              f"{total_frozen/duration*100:.1f}% of runtime)" if duration else "")
+        print("Longest series:")
         for start, dur, n in sorted(frozen_events, key=lambda x: -x[1])[:10]:
-            print(f"  ab t={start:8.0f}s   Dauer {dur:6.0f}s   ({n} identische Polls)")
+            print(f"  from t={start:8.0f}s   duration {dur:6.0f}s   ({n} identical polls)")
         print()
-        print("→ Falls diese Dauern in der Größenordnung der WS-Aussetzer liegen")
-        print("  (Konzept §8.2: bis 393s, ~30% der Zeit): spricht für einen")
-        print("  geräteinhärenten Effekt, unabhängig vom WS-Zuhören.")
+        print("-> If these durations are in the same order of magnitude as the")
+        print("  WS dropouts (concept §8.2: up to 393s, ~30% of the time): points")
+        print("  to an effect inherent to the device, independent of WS listening.")
     print("=" * 66)
 
 
 def run_report(args: argparse.Namespace) -> int:
     path = Path(args.recording)
     if not path.exists():
-        print(f"Datei nicht gefunden: {path}", file=sys.stderr)
+        print(f"File not found: {path}", file=sys.stderr)
         return 1
 
     opener = gzip.open if path.suffix == ".gz" else open
@@ -267,8 +266,8 @@ def run_report(args: argparse.Namespace) -> int:
             try:
                 line = fh.readline()
             except (EOFError, OSError) as err:
-                print(f"Hinweis: Mitschnitt endet abrupt ({type(err).__name__}: {err}) "
-                      "— werte den lesbaren Teil aus.", file=sys.stderr)
+                print(f"Note: recording ends abruptly ({type(err).__name__}: {err}) "
+                      "- evaluating the readable part.", file=sys.stderr)
                 break
             if not line:
                 break
@@ -283,7 +282,7 @@ def run_report(args: argparse.Namespace) -> int:
             t = float(rec.get("t", 0.0))
             last_t = max(last_t, t)
             if prev_t is not None and t - prev_t > 0:
-                interval = t - prev_t  # jüngstes beobachtetes Intervall als Schätzung
+                interval = t - prev_t  # most recent observed interval as an estimate
             prev_t = t
 
             if rec.get("ev") == "error":
@@ -316,18 +315,18 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(
         prog="http_baseline",
-        description="HTTP-Only-Vergleichsmessung ohne WebSocket-Client (P0, Konzept §10).")
+        description="HTTP-only comparison measurement without a WebSocket client (P0, concept §10).")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    rec = sub.add_parser("record", help="Pollen und mitschneiden")
+    rec = sub.add_parser("record", help="Poll and record")
     rec.add_argument("--host", required=True)
     rec.add_argument("--port", type=int, default=80)
     rec.add_argument("--ssl", action="store_true")
     rec.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
-    rec.add_argument("--duration", type=float, default=0, help="Sekunden; 0 = bis Strg+C")
+    rec.add_argument("--duration", type=float, default=0, help="Seconds; 0 = until Ctrl+C")
     rec.add_argument("--out", default=None)
 
-    rep = sub.add_parser("report", help="Mitschnitt auswerten")
+    rep = sub.add_parser("report", help="Evaluate a recording")
     rep.add_argument("recording")
 
     args = parser.parse_args(argv)

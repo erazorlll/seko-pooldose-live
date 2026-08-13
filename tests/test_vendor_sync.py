@@ -1,9 +1,9 @@
-"""Prüft, dass die vendorte Kopie (custom_components/pooldose_live/vendor/)
-synchron mit src/pooldose_live/ ist - siehe tools/check_vendor_sync.py und
-custom_components/pooldose_live/vendor/README.md für die Begründung.
+"""Checks that the vendored copy (custom_components/pooldose_live/vendor/) is
+in sync with src/pooldose_live/ - see tools/check_vendor_sync.py and
+custom_components/pooldose_live/vendor/README.md for the rationale.
 
-Reine Bibliothekslogik ohne Home-Assistant-Abhängigkeit, läuft als regulärer
-pytest-Test (kein fcntl-Problem, siehe README).
+Pure library logic without a Home Assistant dependency, runs as a regular
+pytest test (no fcntl problem, see README).
 """
 
 from __future__ import annotations
@@ -21,6 +21,6 @@ def test_vendor_is_in_sync() -> None:
         capture_output=True, text=True, cwd=REPO_ROOT,
     )
     assert result.returncode == 0, (
-        f"vendor/ ist nicht synchron mit src/pooldose_live/ - "
-        f"python tools/sync_vendor.py ausfuehren.\n{result.stdout}{result.stderr}"
+        f"vendor/ is not in sync with src/pooldose_live/ - "
+        f"run python tools/sync_vendor.py.\n{result.stdout}{result.stderr}"
     )

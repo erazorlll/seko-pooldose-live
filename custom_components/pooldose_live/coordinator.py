@@ -1,13 +1,13 @@
-"""Push-Coordinator: hält den zuletzt aufgelösten Kanal-Stand.
+"""Push coordinator: holds the most recently resolved channel state.
 
-Bewusst KEIN Poll-Coordinator: `update_interval=None`, Daten kommen
-ausschließlich per Push aus `PooldoseTransport.events()`. Setup blockiert
-nicht auf die erste Nachricht - das Gerät kann laut Konzept §8.2/§8.3
-minutenlang schweigen, ohne dass etwas kaputt ist.
+Deliberately NOT a poll coordinator: `update_interval=None`, data arrives
+exclusively via push from `PooldoseTransport.events()`. Setup doesn't block
+on the first message - per concept §8.2/§8.3 the device can stay silent for
+minutes without anything being broken.
 
-Trackt nebenbei eine kleine Sitzungsstatistik (Reconnects, längste Lücke,
-letzter Roh-Snapshot, zuletzt bekannter Standby-Zustand) für diagnostics.py -
-das leichtgewichtige Live-Pendant zu tools/ws_probe.py's Stats-Klasse aus P0.
+Also tracks a small session statistics set (reconnects, longest gap, last
+raw snapshot, last known standby state) for diagnostics.py - the
+lightweight live counterpart to tools/ws_probe.py's Stats class from P0.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ type PooldoseLiveConfigEntry = ConfigEntry[PooldoseLiveCoordinator]
 
 
 class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]]):
-    """Hält den zuletzt aufgelösten Kanal-Stand, aktualisiert per WS-Push."""
+    """Holds the most recently resolved channel state, updated via WS push."""
 
     config_entry: PooldoseLiveConfigEntry
 
@@ -50,8 +50,8 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
         self._last_display: dict[str, object] | None = None
         self.data = {}
 
-        # Diagnostics (diagnostics.py) - nur für die laufende Sitzung, kein
-        # Ersatz für einen echten Mitschnitt wie in P0.
+        # Diagnostics (diagnostics.py) - only for the running session, not a
+        # replacement for a real recording like in P0.
         self.session_start = time.monotonic()
         self.stats = {"connects": 0, "disconnects": 0, "watchdog_trips": 0, "cycles": 0}
         self.last_snapshot_raw: dict[str, Any] | None = None
@@ -60,7 +60,7 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
         self.longest_gap: float = 0.0
 
     def start(self) -> None:
-        """Startet den Hintergrund-Task, an die Lebenszeit des Entries gebunden."""
+        """Starts the background task, tied to the entry's lifetime."""
         self.config_entry.async_create_background_task(
             self.hass, self._run(), name=f"{DOMAIN}_{self.host}_transport"
         )
@@ -111,24 +111,24 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
             self._report_mapping_status()
 
         resolved = self.mapping.resolve_all(channels)
-        # visible=false erzeugt keine Entity (Konzept B3) - hier gefiltert,
-        # damit sensor.py/binary_sensor.py sich nicht selbst darum kümmern
-        # müssen.
+        # visible=false doesn't create an entity (concept B3) - filtered
+        # here so sensor.py/binary_sensor.py don't have to deal with it
+        # themselves.
         by_name = {rc.name: rc for rc in resolved if rc.channel.visible}
 
-        # Standby-Kontext (Konzept §8.4) unabhängig vom Änderungs-Filter
-        # unten mitführen - er soll auch dann aktuell bleiben, wenn sich
-        # sonst nichts geändert hat.
+        # Carry the standby context (concept §8.4) along independent of the
+        # change filter below - it should stay current even if nothing else
+        # changed.
         standby = by_name.get("alarm_system_standby")
         if standby is not None:
             self.last_known_standby = bool(standby.display)
 
-        # Minimaler Änderungs-Filter: nur schreiben, wenn sich mindestens ein
-        # Anzeigewert geändert hat. Die volle Entprellung mit
-        # Resolution-Schwellen und Heartbeat (Konzept §5.6) läuft zusätzlich
-        # pro Entity (siehe entity.py) - das hier verhindert nur den
-        # trivialen Fall "kompletter Zyklus ohne jede Änderung", der laut
-        # §8.2 die deutliche Mehrheit der Zyklen ist.
+        # Minimal change filter: only write if at least one displayed value
+        # changed. The full debouncing with resolution thresholds and a
+        # heartbeat (concept §5.6) runs additionally per entity (see
+        # entity.py) - this here only prevents the trivial case of "a
+        # complete cycle with no change at all", which per §8.2 is the
+        # clear majority of cycles.
         display = {name: rc.display for name, rc in by_name.items()}
         if display == self._last_display:
             return
@@ -137,14 +137,13 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
         self.async_set_updated_data(by_name)
 
     def _report_mapping_status(self) -> None:
-        """Repair-Issue bei FW-Fallback/Raw-Modus (Konzept §5.5/§5.9).
+        """Repair issue on FW fallback/raw mode (concept §5.5/§5.9).
 
-        Beide Fälle sind funktionsfähig (Raw-Modus liefert generisch
-        benannte Kanäle statt eines Totalausfalls, Konzept-Kernidee gegen
-        B2) - aber der Nutzer soll sichtbar erfahren, dass die
-        Namensauflösung nicht optimal ist, und wie er zu einer besseren
-        Abdeckung beitragen kann (derselbe Weg wie Issue #20 bei
-        lmaertin/python-pooldose).
+        Both cases are functional (raw mode delivers generically named
+        channels instead of a total outage, the concept's core idea against
+        B2) - but the user should visibly find out that name resolution
+        isn't optimal, and how they can contribute to better coverage
+        (the same path as issue #20 at lmaertin/python-pooldose).
         """
         mapping = self.mapping
         assert mapping is not None
@@ -173,6 +172,6 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
             )
 
     def cleanup_issues(self) -> None:
-        """Repair-Issues entfernen, z. B. beim Entladen des Config-Entry."""
+        """Removes repair issues, e.g. when the config entry is unloaded."""
         ir.async_delete_issue(self.hass, DOMAIN, f"{ISSUE_FW_FALLBACK}_{self.host}")
         ir.async_delete_issue(self.hass, DOMAIN, f"{ISSUE_RAW_MODE}_{self.host}")

@@ -1,13 +1,13 @@
-"""Mapping-Loader: hash -> sprechender Name, dreistufiger Fallback (Konzept §5.5).
+"""Mapping loader: hash -> readable name, three-tier fallback (concept §5.5).
 
-1. Exakter Treffer: model_<MODEL>_FW<FW>.json
-2. Gleiches Modell, andere Firmware vorhanden -> laden + Warnung
-3. Kein Mapping-File für das Modell -> Raw-Modus: Name/Typ pro Kanal aus der
-   Struktur des Wertobjekts geraten (siehe `infer_raw_type`)
+1. Exact match: model_<MODEL>_FW<FW>.json
+2. Same model, different firmware available -> load + warn
+3. No mapping file for the model -> raw mode: guess name/type per channel
+   from the structure of the value object (see `infer_raw_type`)
 
-Die Mapping-Tabellen selbst sind aus python-pooldose vendort (MIT-Lizenz,
-siehe mappings/ATTRIBUTION.md) - dieser Loader und die gesamte Fallback-Logik
-sind eigener Code (Begründung: Konzept §5.2).
+The mapping tables themselves are vendored from python-pooldose (MIT
+license, see mappings/ATTRIBUTION.md) - this loader and all of the fallback
+logic are our own code (rationale: concept §5.2).
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ from typing import Any
 
 from .channels import Channel
 
-# Modell-Alias-Tabelle: PRODUCT_CODE, wie ihn manche Geräte melden, weicht vom
-# Modell-ID ab, das tatsächlich in den Daten-Keys/Mapping-Dateinamen steckt.
-# Übernommen aus python-pooldose/src/pooldose/constants.py (siehe ATTRIBUTION.md).
+# Model alias table: the PRODUCT_CODE some devices report differs from the
+# model ID that actually shows up in the data keys/mapping filenames.
+# Taken from python-pooldose/src/pooldose/constants.py (see ATTRIBUTION.md).
 MODEL_ALIASES: dict[str, str] = {
     "PDHC1H1HAR1V1": "PDPR1H1HAR1V0",
     "PDHC1H1HAR1V0": "PDPR1H1HAR1V0",
@@ -49,7 +49,7 @@ class MappingStatus(str, Enum):
 
 @dataclass
 class ResolvedChannel:
-    """Ein Channel, angereichert um Name/Typ/Anzeigewert."""
+    """A channel enriched with a name/type/display value."""
 
     name: str
     type: str
@@ -73,13 +73,13 @@ def _load_json(filename: str) -> dict[str, Any]:
 
 
 def _closest_fw(available: list[str], wanted: str) -> str:
-    """Wählt die 'nächstliegende' FW-Datei desselben Modells.
+    """Picks the "closest" FW file of the same model.
 
-    Best effort: numerischer Abstand, falls beide FW-Codes als Zahl lesbar
-    sind (z. B. FW539292 -> 539292); sonst die erste in sortierter Reihenfolge.
-    Bei nur einer verfügbaren Datei ist das ohnehin eindeutig - der genaue
-    Auswahlmechanismus bei mehreren Kandidaten ist ein Detail, das erst mit
-    einem echten Mehr-FW-Fall am selben Modell validiert werden kann.
+    Best effort: numeric distance if both FW codes parse as numbers (e.g.
+    FW539292 -> 539292); otherwise the first one in sorted order. With only
+    one available file this is unambiguous anyway - the exact selection
+    mechanism with multiple candidates is a detail that can only really be
+    validated once we hit a real multi-FW case for the same model.
     """
     def as_int(fw: str) -> int | None:
         digits = fw[2:] if fw.upper().startswith("FW") else fw
@@ -95,29 +95,30 @@ def _closest_fw(available: list[str], wanted: str) -> str:
 
 
 class ModelMapping:
-    """Aufgelöste Mapping-Tabelle für ein Modell/FW, invertiert nach Hash.
+    """Resolved mapping table for a model/FW, inverted by hash.
 
-    Ein Hash kann auf mehrere benannte Einträge zeigen (z. B. minT/maxT-
-    Varianten desselben Rohwerts über das "field"-Attribut) - deshalb
-    hash -> Liste, nicht hash -> ein Eintrag.
+    A hash can point to several named entries (e.g. minT/maxT variants of
+    the same raw value via the "field" attribute) - hence hash -> list, not
+    hash -> one entry.
     """
 
     def __init__(self, model_id: str, fw_code: str, status: MappingStatus,
                 matched_fw: str | None, table: dict[str, dict[str, Any]] | None) -> None:
         self.model_id = model_id
-        self.fw_code = fw_code  # wie übergeben, i.d.R. MIT "FW"-Präfix (aus channels.detect_prefix)
+        self.fw_code = fw_code  # as passed in, usually WITH the "FW" prefix (from channels.detect_prefix)
         self.status = status
-        self.matched_fw = matched_fw  # OHNE "FW"-Präfix, None nur bei RAW - für EXACT und
-        # FW_FALLBACK einheitlich (z.B. "539292"), zum direkten Zusammensetzen des Präfix
-        # via f"{model_id}_FW{matched_fw}_" bei Schreibzugriffen (siehe write.py)
+        self.matched_fw = matched_fw  # WITHOUT the "FW" prefix, None only for RAW - consistent
+        # between EXACT and FW_FALLBACK (e.g. "539292"), for directly building the prefix
+        # via f"{model_id}_FW{matched_fw}_" when writing (see write.py)
         self.table = table or {}
         self._by_hash: dict[str, list[tuple[str, dict]]] = {}
         for name, entry in self.table.items():
             self._by_hash.setdefault(entry["key"], []).append((name, entry))
 
     def resolve_channel(self, channel: Channel) -> list[ResolvedChannel]:
-        """Löst einen einzelnen Channel auf. Leere Liste nur bei Raw-Fallback
-        mit unbestimmbarem Typ (kommt praktisch nicht vor, siehe `infer_raw_type`)."""
+        """Resolves a single channel. Empty list only for the raw fallback
+        with an undeterminable type (practically never happens, see
+        `infer_raw_type`)."""
         entries = self._by_hash.get(channel.hash)
         if entries:
             return [_resolve_named(name, entry, channel) for name, entry in entries]
@@ -131,12 +132,12 @@ class ModelMapping:
 
     @property
     def coverage(self) -> tuple[int, int]:
-        """(Anzahl Hashes im Mapping, Anzahl eindeutiger Hashes) - zur Diagnose."""
+        """(number of hashes in the mapping, number of unique hashes) - for diagnostics."""
         return len(self.table), len(self._by_hash)
 
 
 def load(model_id: str, fw_code: str) -> ModelMapping:
-    """Lädt die Mapping-Tabelle für (model_id, fw_code) mit Drei-Stufen-Fallback."""
+    """Loads the mapping table for (model_id, fw_code) with the three-tier fallback."""
     resolved_model = MODEL_ALIASES.get(model_id, model_id)
 
     exact_name = f"model_{resolved_model}_FW{fw_code.removeprefix('FW')}.json"
@@ -161,11 +162,11 @@ def load(model_id: str, fw_code: str) -> ModelMapping:
 
 
 def infer_raw_type(channel: Channel) -> str:
-    """Rät den Entity-Typ aus der Struktur des Wertobjekts (Konzept §5.5).
+    """Guesses the entity type from the structure of the value object (concept §5.5).
 
-    set vorhanden -> number; comboitems -> select; current ist "O"/"F" oder
-    bool -> binary_sensor (bewusst nicht "switch" - im Raw-Modus wissen wir
-    nicht, ob ein Kanal schreibbar ist); sonst sensor.
+    `set` present -> number; `comboitems` -> select; `current` is "O"/"F"
+    or bool -> binary_sensor (deliberately not "switch" - in raw mode we
+    don't know whether a channel is writable); otherwise sensor.
     """
     if channel.set is not None:
         return VALUE_TYPE_NUMBER
@@ -206,9 +207,9 @@ def _resolve_raw(channel: Channel) -> ResolvedChannel:
 
 
 def _raw_current(channel: Channel) -> Any:
-    """Der unbearbeitete current-Wert, wie er im Payload stand (mit Pipes,
-    falls Label) - für den Abgleich gegen kuratierte conversion-Tabellen,
-    die genau dieses Format als Schlüssel verwenden."""
+    """The unprocessed current value as it appeared in the payload (with
+    pipes, if it's a label) - for matching against curated conversion
+    tables, which use exactly this format as their key."""
     if isinstance(channel.raw, dict):
         return channel.raw.get("current")
     return channel.raw
@@ -239,8 +240,9 @@ def _resolve_named(name: str, entry: dict[str, Any], channel: Channel) -> Resolv
                                display=text if text is not None else channel.current,
                                source="mapping")
 
-    # sensor / binary_sensor: kuratierte conversion (Original-Rohwert als
-    # Schlüssel) bevorzugen, sonst generisch dekodiertes Label als Fallback.
+    # sensor / binary_sensor: prefer a curated conversion (keyed by the
+    # original raw value), otherwise fall back to the generically decoded
+    # label.
     display = channel.label
     if conversion:
         raw_current = _raw_current(channel)

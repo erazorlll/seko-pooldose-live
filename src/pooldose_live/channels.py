@@ -1,14 +1,14 @@
-"""Decoder: rohes devicedata-Dict -> dict[hash, Channel].
+"""Decoder: raw devicedata dict -> dict[hash, Channel].
 
-Reine Transformation, kein Netzwerk, keine Mapping-Datei nötig. Deckt die in
-websocker-spec.md dokumentierte Struktur ab: Wertobjekte mit
+Pure transformation, no network, no mapping file needed. Covers the
+structure documented in websocker-spec.md: value objects with
 current/set/absMin/absMax/minT/maxT/alarm/visible/magnitude/resolution/
-comboitems, daneben bare Booleans, daneben Label-Strings in Pipes
-(`|MODEL_FW_LABEL_hash_TEXT|` bzw. `..._COMBO_...` bei comboitems).
+comboitems, plus bare booleans, plus label strings wrapped in pipes
+(`|MODEL_FW_LABEL_hash_TEXT|` or `..._COMBO_...` for comboitems).
 
-Der Präfix (Modell + FW-Code) wird aus den Keys selbst abgeleitet - dieselbe
-Regex wie `DeviceAnalyzer._extract_device_info` in python-pooldose nutzt,
-kein HTTP-Call nötig (siehe Konzept §4, "Bestätigt").
+The prefix (model + FW code) is derived from the keys themselves - the same
+regex that `DeviceAnalyzer._extract_device_info` uses in python-pooldose, no
+HTTP call needed (see concept §4, "Confirmed").
 """
 
 from __future__ import annotations
@@ -17,24 +17,24 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-# Felder, die nicht zu den eigentlichen Kanälen gehören.
+# Fields that aren't actual channels.
 _SKIP_KEYS = {"deviceInfo", "collapsed_bar"}
 
-# Modell_FWCode_ Präfix + Rest als Key. Gleiche Grundidee wie
+# Model_FWCode_ prefix + the rest as the key. Same basic idea as
 # DeviceAnalyzer._extract_device_info in python-pooldose.
 _PREFIX_RE = re.compile(r"^([A-Z0-9]+)_(FW[A-Z0-9]+)_(.+)$")
 
-# Einheiten, die keine echte Anzeigeeinheit sind.
+# Units that aren't a real display unit.
 _NO_UNIT = {"undefined", "ph"}
 _CL2_ALIASES = {"cl2", "chlorine"}
 
 
 @dataclass
 class Channel:
-    """Ein dekodierter Kanal - eine Zeile aus dem devicedata-Dict."""
+    """A decoded channel - one row from the devicedata dict."""
 
     hash: str
-    """Kurzer Schlüssel ohne Modell/FW-Präfix, z. B. 'w_1ekeigkin'."""
+    """Short key without the model/FW prefix, e.g. 'w_1ekeigkin'."""
 
     current: Any = None
     set: Any = None
@@ -47,25 +47,25 @@ class Channel:
     alarm: bool | None = None
     visible: bool = True
     options: dict[str, str] | None = None
-    """Aufgelöste comboitems: Index -> Klartext-Label (COMBO-Präfix entfernt)."""
+    """Decoded comboitems: index -> plain-text label (COMBO prefix stripped)."""
 
     label: Any = None
-    """`current`, falls es ein Pipe-Label war: mit entferntem LABEL-Präfix.
-    Sonst identisch zu `current`. Generisch berechnet, ohne Mapping-Datei -
-    siehe `decode_label()`. Kuratierte Mapping-Tabellen können `current`
-    zusätzlich über ihre eigene `conversion`-Tabelle übersetzen."""
+    """`current`, with the LABEL prefix stripped if it was a pipe-wrapped
+    label. Otherwise identical to `current`. Computed generically, without a
+    mapping file - see `decode_label()`. Curated mapping tables can
+    additionally translate `current` through their own `conversion` table."""
 
     raw: dict[str, Any] | bool | Any = field(default=None, repr=False)
-    """Unverändertes Original-Wertobjekt (oder bare Bool), für Debug/Diagnostics."""
+    """Unmodified original value object (or bare bool), for debug/diagnostics."""
 
     @property
     def is_value_object(self) -> bool:
-        """False bei bare Booleans (siehe websocker-spec.md, 'blanker Boolean')."""
+        """False for bare booleans (see websocker-spec.md, 'bare boolean')."""
         return isinstance(self.raw, dict)
 
 
 def split_prefix(key: str) -> tuple[str, str, str] | None:
-    """Zerlegt einen Roh-Key in (model, fw_code, hash). None bei Nicht-Treffer."""
+    """Splits a raw key into (model, fw_code, hash). None on no match."""
     m = _PREFIX_RE.match(key)
     if not m:
         return None
@@ -73,16 +73,16 @@ def split_prefix(key: str) -> tuple[str, str, str] | None:
 
 
 def decode_label(value: Any, model: str, fw: str, hash_key: str) -> Any:
-    """Entfernt LABEL-/COMBO-Präfixe generisch, ohne Mapping-Tabelle.
+    """Strips LABEL/COMBO prefixes generically, without a mapping table.
 
-    Zwei Formen kommen vor: `current` bei Label-Feldern ist in Pipes
-    eingeschlossen (`|MODEL_FW_LABEL_hash_TEXT|`), die Einträge innerhalb von
-    `comboitems` dagegen NICHT (`MODEL_FW_COMBO_hash_TEXT`, ohne Pipes) - an
-    echten Gerätedaten verifiziert. Beide Formen werden hier behandelt.
+    Two forms occur: `current` on label fields is wrapped in pipes
+    (`|MODEL_FW_LABEL_hash_TEXT|`), while entries inside `comboitems` are
+    NOT (`MODEL_FW_COMBO_hash_TEXT`, no pipes) - verified against real
+    device data. Both forms are handled here.
 
-    Nicht von rechts splitten (Beispiele wie `_2_POINTS` oder `__C` brechen
-    dabei, siehe websocker-spec.md) - stattdessen den bekannten Präfix
-    entfernen, wie die Spec es vorschreibt.
+    Don't split from the right (examples like `_2_POINTS` or `__C` break
+    that way, see websocker-spec.md) - instead strip the known prefix, as
+    the spec prescribes.
     """
     if not isinstance(value, str):
         return value
@@ -91,8 +91,8 @@ def decode_label(value: Any, model: str, fw: str, hash_key: str) -> Any:
         prefix = f"{model}_{fw}_{kind}_{hash_key}_"
         if inner.startswith(prefix):
             return inner[len(prefix):].rstrip("_")
-    # Kein erkennbarer Präfix (anderes Format oder gar kein Label) -
-    # unverändert zurückgeben statt zu raten.
+    # No recognizable prefix (different format, or not a label at all) -
+    # return unchanged instead of guessing.
     return value
 
 
@@ -120,9 +120,9 @@ def _decode_comboitems(raw_items: Any, model: str, fw: str, hash_key: str) -> di
 
 
 def decode_value(raw_entry: Any, model: str, fw: str, hash_key: str) -> Channel:
-    """Baut einen Channel aus einem einzelnen Roh-Wertobjekt (oder bare Bool)."""
+    """Builds a Channel from a single raw value object (or bare bool)."""
     if not isinstance(raw_entry, dict):
-        # "Manche Einträge sind kein Objekt, sondern ein blanker Boolean"
+        # "Some entries aren't an object, but a bare boolean"
         return Channel(hash=hash_key, current=raw_entry, label=raw_entry,
                        visible=True, raw=raw_entry)
 
@@ -146,12 +146,12 @@ def decode_value(raw_entry: Any, model: str, fw: str, hash_key: str) -> Channel:
 
 
 def decode_devicedata(payload: dict[str, Any]) -> dict[str, Channel]:
-    """Dekodiert das devicedata[<SERIAL>_DEVICE]-Dict eines einzelnen Geräts.
+    """Decodes the devicedata[<SERIAL>_DEVICE] dict of a single device.
 
-    Erwartet bereits das durch Reassembly gemergte, vollständige Dict (beide
-    Chunks). Keys ohne erkennbaren Modell_FW-Präfix (z. B. künftige, uns
-    unbekannte Metadatenfelder) werden übersprungen statt eine Exception zu
-    werfen - robust gegen unbekannte Struktur, wie Konzept §5 fordert.
+    Expects the already-merged, complete dict from reassembly (both
+    chunks). Keys without a recognizable model_FW prefix (e.g. future
+    metadata fields we don't know about) are skipped instead of raising an
+    exception - robust against unknown structure, as concept §5 requires.
     """
     channels: dict[str, Channel] = {}
     for key, raw_entry in payload.items():
@@ -166,7 +166,7 @@ def decode_devicedata(payload: dict[str, Any]) -> dict[str, Channel]:
 
 
 def detect_prefix(payload: dict[str, Any]) -> tuple[str, str] | None:
-    """Leitet (model, fw_code) aus dem ersten passenden Key im Payload ab."""
+    """Derives (model, fw_code) from the first matching key in the payload."""
     for key in payload:
         if key in _SKIP_KEYS:
             continue

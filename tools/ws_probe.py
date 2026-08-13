@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Mitschnitt- und Messwerkzeug für den lokalen PoolDose-WebSocket (P0).
+"""Recording and measurement tool for the local PoolDose WebSocket (P0).
 
-Zwei Betriebsarten:
+Two modes:
 
-    record   verbindet sich auf ws://<host>:1334/, hört zu und schreibt jeden
-             Frame als JSONL. Sendet selbst nichts (siehe Anmerkung unten).
-    report   wertet einen Mitschnitt offline aus.
+    record   connects to ws://<host>:1334/, listens, and writes every frame
+             as JSONL. Sends nothing itself (see note below).
+    report   evaluates a recording offline.
 
-Die Transportschicht hier ist bewusst schon so gebaut, wie sie später in der
-Integration laufen soll: eine Verbindung, Watchdog, exponentielles Backoff,
-Reassembly nach progressInfo. Was hier stabil läuft, wandert nach P1 hinüber.
+The transport layer here is deliberately already built the way it's meant
+to run in the integration later: one connection, watchdog, exponential
+backoff, reassembly per progressInfo. What runs stable here migrates over
+to P1.
 
-Anmerkung zum "sendet nichts": auf Anwendungsebene wird kein einziger Frame
-erzeugt. `autoping=True` beantwortet lediglich PING-Frames des Geräts mit PONG
-— das ist Protokollpflicht, keine Anfrage. `heartbeat=None` stellt sicher, dass
-wir keine eigenen Pings anstoßen.
+Note on "sends nothing": no application-level frame is ever generated.
+`autoping=True` merely answers the device's PING frames with PONG - that's
+a protocol obligation, not a request. `heartbeat=None` ensures we never
+trigger our own pings.
 """
 
 from __future__ import annotations
@@ -40,18 +41,18 @@ BACKOFF_START = 2.0
 BACKOFF_MAX = 60.0
 STATUS_EVERY = 15.0
 
-# Felder, die niemals in einen Mitschnitt gehören. wifi_station kann den
-# WLAN-Schlüssel führen; ein Dump soll teilbar bleiben.
+# Fields that must never end up in a recording. wifi_station can carry the
+# WLAN key; a dump should stay shareable.
 SENSITIVE_KEYS = {"key", "psk", "password", "passwd", "pwd", "wifi_key", "ap_key", "secret"}
 
 TOPIC_VALUES = "instant_values"
 
 
-# ---------------------------------------------------------------- Aufzeichnung
+# -------------------------------------------------------------------- Recording
 
 
 def _redact(obj: Any) -> Any:
-    """Ersetzt Werte sensibler Schlüssel rekursiv durch '<redacted>'."""
+    """Recursively replaces values of sensitive keys with '<redacted>'."""
     if isinstance(obj, dict):
         return {
             k: ("<redacted>" if k.lower() in SENSITIVE_KEYS else _redact(v))
@@ -63,7 +64,7 @@ def _redact(obj: Any) -> Any:
 
 
 class Recorder:
-    """Schreibt Ereignisse als JSON Lines, optional gzip-komprimiert."""
+    """Writes events as JSON Lines, optionally gzip-compressed."""
 
     def __init__(self, path: Path | None, redact_serial: bool) -> None:
         self.path = path
@@ -102,7 +103,7 @@ class Recorder:
 
 
 class Stats:
-    """Laufende Kennzahlen, für die Live-Anzeige und den Abschlussbericht."""
+    """Running metrics, for the live display and the final report."""
 
     def __init__(self) -> None:
         self.topics: Counter[str] = Counter()
@@ -113,8 +114,8 @@ class Stats:
         self.connects = 0
         self.watchdog_trips = 0
         self.errors: Counter[str] = Counter()
-        self.cycle_times: list[float] = []   # monoton, Start jedes Zyklus
-        self.frame_times: list[float] = []   # monoton, jeder Frame
+        self.cycle_times: list[float] = []   # monotonic, start of each cycle
+        self.frame_times: list[float] = []   # monotonic, every frame
         self.connect_times: list[float] = []
         self.disconnect_times: list[float] = []
         self.last_frame: float | None = None
@@ -127,22 +128,22 @@ class Stats:
 
 
 class Reassembler:
-    """Setzt gechunkte instant_values-Zyklen nach den Regeln der Spec zusammen."""
+    """Assembles chunked instant_values cycles per the spec's rules."""
 
     def __init__(self) -> None:
         self.buf: dict[str, dict[str, Any]] = {}
         self.open_cycle = False
 
     def feed(self, data: dict[str, Any]) -> tuple[dict | None, bool]:
-        """Gibt (Snapshot|None, abgebrochener_Zyklus) zurück."""
+        """Returns (snapshot|None, cycle_aborted)."""
         progress = data.get("progressInfo") or {}
         offset = progress.get("offset", 1)
         total = progress.get("total", 1)
 
         aborted = False
         if offset == 1:
-            # Ein neuer Zyklus beginnt. Lag noch ein halber im Puffer, ist der
-            # verloren - genau das verhindert Frankenstein-Datensätze.
+            # A new cycle starts. If half of one was still buffered, it's
+            # lost - that's exactly what prevents Frankenstein datasets.
             aborted = self.open_cycle
             self.buf.clear()
             self.open_cycle = True
@@ -159,10 +160,10 @@ class Reassembler:
 
 async def _http_probe(session: aiohttp.ClientSession, host: str, interval: float,
                       stats: Stats, rec: Recorder, t0: float, stop: asyncio.Event) -> None:
-    """Misst nebenher die Antwortzeit des HTTP-Servers am Gerät.
+    """Measures the device's HTTP server response time on the side.
 
-    Nutzt eine kleine statische Datei, kein getInstantValues - wir wollen die
-    Latenz messen, nicht selbst Last erzeugen.
+    Uses a small static file, not getInstantValues - we want to measure
+    latency, not generate load ourselves.
     """
     url = f"http://{host}/js_libs/params.js"
     while not stop.is_set():
@@ -185,16 +186,16 @@ async def _http_probe(session: aiohttp.ClientSession, host: str, interval: float
 async def _receive_or_stop(
     ws: aiohttp.ClientWebSocketResponse, stop: asyncio.Event, timeout: float
 ) -> tuple[aiohttp.WSMessage | None, bool]:
-    """Wartet auf den nächsten Frame oder auf `stop`, je nachdem was zuerst kommt.
+    """Waits for the next frame or for `stop`, whichever comes first.
 
-    Ohne dieses Rennen würde `_listen` unten ausschließlich auf `ws.receive()`
-    warten. Bei einem ~4,2s-Grundtakt kommt dabei nie eine 30s-Stille zusammen,
-    der Watchdog löst also nie aus — `stop` (z. B. von `--duration`) würde erst
-    nach dem nächsten Verbindungsabbruch bemerkt, praktisch nie.
+    Without this race, `_listen` below would wait exclusively on
+    `ws.receive()`. With a ~4.2s base tick, a 30s silence never accumulates,
+    so the watchdog never fires - `stop` (e.g. from `--duration`) would only
+    be noticed after the next connection drop, practically never.
 
-    Rückgabe `(msg, False)` bei einem Frame, `(None, True)` wenn `stop` zuerst
-    kam. Löst `asyncio.TimeoutError` aus, wenn `timeout` Sekunden lang weder
-    noch eintraf (das ist der eigentliche Watchdog-Fall).
+    Returns `(msg, False)` on a frame, `(None, True)` if `stop` fired first.
+    Raises `asyncio.TimeoutError` if neither happened for `timeout` seconds
+    (that's the actual watchdog case).
     """
     recv_task = asyncio.ensure_future(ws.receive())
     stop_task = asyncio.ensure_future(stop.wait())
@@ -217,14 +218,14 @@ async def _receive_or_stop(
 async def _listen(session: aiohttp.ClientSession, url: str, watchdog: float,
                   stats: Stats, rec: Recorder, t0: float, keep_raw: bool,
                   stop: asyncio.Event) -> str:
-    """Eine Verbindungssitzung. Kehrt mit dem Abbruchgrund zurück."""
+    """One connection session. Returns with the reason it ended."""
     reasm = Reassembler()
     async with session.ws_connect(url, heartbeat=None, autoping=True,
                                   timeout=aiohttp.ClientWSTimeout(ws_close=10)) as ws:
         stats.connects += 1
         stats.connect_times.append(time.monotonic() - t0)
         rec.write("connect", t0, url=url)
-        print(f"[{_clock()}] verbunden mit {url}")
+        print(f"[{_clock()}] connected to {url}")
 
         while True:
             try:
@@ -232,16 +233,16 @@ async def _listen(session: aiohttp.ClientSession, url: str, watchdog: float,
             except asyncio.TimeoutError:
                 stats.watchdog_trips += 1
                 rec.write("watchdog", t0, after_s=watchdog)
-                return f"watchdog ({watchdog:.0f}s ohne Frame)"
+                return f"watchdog ({watchdog:.0f}s without a frame)"
             if stopped:
-                return "stop angefordert"
+                return "stop requested"
             assert msg is not None
 
             if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED,
                             aiohttp.WSMsgType.CLOSING):
-                return f"Gegenstelle hat geschlossen ({msg.type.name})"
+                return f"remote side closed ({msg.type.name})"
             if msg.type is aiohttp.WSMsgType.ERROR:
-                return f"WS-Fehler: {ws.exception()}"
+                return f"WS error: {ws.exception()}"
             if msg.type is not aiohttp.WSMsgType.TEXT:
                 stats.errors[f"frametype:{msg.type.name}"] += 1
                 continue
@@ -259,7 +260,7 @@ async def _listen(session: aiohttp.ClientSession, url: str, watchdog: float,
                 rec.write("bad_json", t0, error=str(err), head=msg.data[:200])
                 continue
 
-            topic = payload.get("topic", "<kein topic>")
+            topic = payload.get("topic", "<no topic>")
             stats.topics[topic] += 1
             data = payload.get("data") or {}
 
@@ -296,11 +297,11 @@ async def run_record(args: argparse.Namespace) -> int:
     stop = asyncio.Event()
     backoff = BACKOFF_START
 
-    print(f"Mitschnitt {url}   Watchdog {args.watchdog:.0f}s   "
-          f"Dauer {'unbegrenzt' if not args.duration else str(args.duration) + 's'}")
+    print(f"Recording {url}   Watchdog {args.watchdog:.0f}s   "
+          f"Duration {'unlimited' if not args.duration else str(args.duration) + 's'}")
     if rec.path:
-        print(f"Ausgabe: {rec.path}")
-    print("Abbruch mit Strg+C\n")
+        print(f"Output: {rec.path}")
+    print("Stop with Ctrl+C\n")
 
     async with aiohttp.ClientSession() as session:
         tasks = []
@@ -325,7 +326,7 @@ async def run_record(args: argparse.Namespace) -> int:
                     break
                 stats.disconnect_times.append(time.monotonic() - t0)
                 rec.write("disconnect", t0, reason=reason, retry_in=backoff)
-                print(f"[{_clock()}] Verbindung weg: {reason} — neuer Versuch in {backoff:.0f}s")
+                print(f"[{_clock()}] Connection lost: {reason} - retrying in {backoff:.0f}s")
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=backoff)
                 except asyncio.TimeoutError:
@@ -343,8 +344,8 @@ async def run_record(args: argparse.Namespace) -> int:
     print()
     print_report(build_report(stats_to_dict(stats, time.monotonic() - t0)))
     if rec.path:
-        print(f"\nMitschnitt: {rec.path}")
-        print(f"Auswertung: python tools/ws_probe.py report {rec.path}")
+        print(f"\nRecording: {rec.path}")
+        print(f"Report: python tools/ws_probe.py report {rec.path}")
     return 0
 
 
@@ -363,28 +364,28 @@ async def _status_loop(stats: Stats, t0: float, stop: asyncio.Event) -> None:
         elapsed = time.monotonic() - t0
         since = (time.monotonic() - stats.last_frame) if stats.last_frame else float("nan")
         print(f"[{_clock()}] {elapsed:6.0f}s  Frames {stats.frames:5d}  "
-              f"Zyklen {stats.cycles_done:4d}  abgebrochen {stats.cycles_aborted:3d}  "
-              f"Reconnects {max(0, stats.connects - 1):2d}  letzter Frame vor {since:4.1f}s")
+              f"Cycles {stats.cycles_done:4d}  aborted {stats.cycles_aborted:3d}  "
+              f"Reconnects {max(0, stats.connects - 1):2d}  last frame {since:4.1f}s ago")
 
 
 def _clock() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
-# ----------------------------------------------------------------- Auswertung
+# -------------------------------------------------------------------- Reporting
 
 
 def estimate_tick(intervals: list[float]) -> tuple[float | None, list[float]]:
-    """Schätzt den Grundtakt als Modalwert der (auf 0,1s gerundeten) Abstände.
+    """Estimates the base tick as the mode of the (0.1s-rounded) intervals.
 
-    Ein früherer Ansatz nahm den Median des *kleinsten* Abstands-Clusters als
-    Basis. Über einen längeren Mitschnitt mit mehreren Reconnects kippte das:
-    ein einzelner, sehr kurzer Abstand direkt nach einem Wiederverbinden (z. B.
-    ein Rest-Zyklus, der mitten im Takt aufschlägt) wurde als "kleinstes
-    Cluster" genommen, und daraus ergab sich ein Grundtakt von 0,67s statt der
-    tatsächlichen ~4,1s — mit Folgefehlern in Slot-Histogramm und Ausfallrate.
-    Der Modalwert ist robust dagegen: er nimmt den häufigsten Abstand, nicht
-    den kleinsten, und der ist bei einem festen Geräte-Scheduler klar dominant.
+    An earlier approach took the median of the *smallest* interval cluster
+    as the basis. Over a longer recording with several reconnects, that
+    tipped over: a single, very short interval right after a reconnect
+    (e.g. a leftover cycle landing mid-tick) was picked up as the "smallest
+    cluster", yielding a base tick of 0.67s instead of the actual ~4.1s -
+    with knock-on errors in the slot histogram and outage rate. The mode is
+    robust against this: it takes the most frequent interval, not the
+    smallest, and that's clearly dominant with a fixed device scheduler.
     """
     usable = [x for x in intervals if x > 0]
     if len(usable) < 5:
@@ -393,11 +394,11 @@ def estimate_tick(intervals: list[float]) -> tuple[float | None, list[float]]:
     mode_val, _ = buckets.most_common(1)[0]
     if mode_val <= 0:
         return None, []
-    # Feinjustierung mit Abständen nahe eines kleinen ganzzahligen Vielfachen
-    # des Modalwerts (deckt einzelne ausgefallene Ticks ab). Reconnect-Lücken
-    # sind hier idealerweise schon nicht mehr enthalten - die Aufrufer filtern
-    # sie vorher über intra_session_intervals() anhand echter Verbindungs-
-    # grenzen heraus, statt sie über Vielfache erraten zu müssen.
+    # Fine-tuning with intervals close to a small integer multiple of the
+    # mode (covers individual dropped ticks). Reconnect gaps should ideally
+    # already be excluded here - callers filter them out beforehand via
+    # intra_session_intervals() based on real connection boundaries, rather
+    # than having to guess them via multiples.
     refined = [
         x / round(x / mode_val)
         for x in usable
@@ -410,29 +411,29 @@ def estimate_tick(intervals: list[float]) -> tuple[float | None, list[float]]:
 
 
 def intra_session_intervals(times: list[float], connect_times: list[float]) -> list[float]:
-    """Aufeinanderfolgende Abstände in `times`, aber nur innerhalb derselben
-    Verbindungssitzung.
+    """Consecutive intervals in `times`, but only within the same connection
+    session.
 
-    Ein Abstand, der einen Reconnect überspannt, ist keine ausgefallene
-    Gerätesekunde, sondern eine selbstverursachte Backoff-Pause - und kann
-    Minuten dauern. Das exakt zu wissen (statt über "passt zu einem Vielfachen
-    des Takts?" zu raten) macht `connect_times` möglich: jede Grenze ist ein
-    echter Verbindungsaufbau, kein geschätzter Schwellwert.
+    An interval spanning a reconnect isn't a dropped device second, but a
+    self-inflicted backoff pause - and can last minutes. Knowing this
+    exactly (instead of guessing via "does it fit a multiple of the tick?")
+    is what `connect_times` enables: every boundary is a real connection
+    setup, not an estimated threshold.
     """
     boundaries = sorted(connect_times)
     out = []
     for a, b in zip(times, times[1:]):
         i = bisect.bisect_right(boundaries, a)
         if i < len(boundaries) and boundaries[i] < b:
-            continue  # ein Reconnect liegt zwischen a und b -> nicht vergleichbar
+            continue  # a reconnect lies between a and b -> not comparable
         out.append(round(b - a, 3))
     return out
 
 
 def pair_outages(disconnect_times: list[float], connect_times: list[float]) -> list[float]:
-    """Ordnet jedem `disconnect` das nächste `connect` danach zu und gibt die
-    jeweilige Ausfalldauer zurück. Direkte Messung statt Ableitung aus
-    Zyklus-Lücken."""
+    """Pairs each `disconnect` with the next `connect` after it and returns
+    the respective outage duration. Direct measurement instead of deriving
+    it from cycle gaps."""
     connects = sorted(connect_times)
     durations = []
     for d in sorted(disconnect_times):
@@ -462,12 +463,13 @@ def stats_to_dict(stats: Stats, duration: float) -> dict[str, Any]:
 
 
 def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
-    """Liest JSON Lines, tolerant gegenüber einem hart abgebrochenen Mitschnitt.
+    """Reads JSON Lines, tolerant of a hard-aborted recording.
 
-    `Recorder.write()` flusht nach jeder Zeile mit Z_SYNC_FLUSH (gzip-Default) -
-    bereits geschriebene Zeilen sind also immer vollständig auf der Platte. Fehlt
-    nur der abschließende gzip-Trailer (Prozess getötet statt sauber beendet),
-    bricht die Auswertung hier ab statt den gesamten Mitschnitt zu verwerfen.
+    `Recorder.write()` flushes after every line with Z_SYNC_FLUSH (gzip
+    default) - lines already written are therefore always complete on
+    disk. If only the closing gzip trailer is missing (process killed
+    instead of shut down cleanly), evaluation stops here instead of
+    discarding the whole recording.
     """
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8") as fh:  # type: ignore[operator]
@@ -475,8 +477,8 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
             try:
                 line = fh.readline()
             except (EOFError, OSError) as err:
-                print(f"Hinweis: Mitschnitt endet abrupt ({type(err).__name__}: {err}) "
-                      "— werte den lesbaren Teil aus.", file=sys.stderr)
+                print(f"Note: recording ends abruptly ({type(err).__name__}: {err}) "
+                      "- evaluating the readable part.", file=sys.stderr)
                 break
             if not line:
                 break
@@ -490,7 +492,7 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
 
 
 def load_recording(path: Path) -> dict[str, Any]:
-    """Baut aus einem Mitschnitt dieselbe Struktur, die record live erzeugt."""
+    """Builds the same structure from a recording that record produces live."""
     topics: Counter[str] = Counter()
     cycle_times: list[float] = []
     frame_times: list[float] = []
@@ -510,7 +512,7 @@ def load_recording(path: Path) -> dict[str, Any]:
             frames += 1
             total_bytes += int(rec.get("size") or 0)
             frame_times.append(t)
-            topic = rec.get("topic", "<kein topic>")
+            topic = rec.get("topic", "<no topic>")
             topics[topic] += 1
             if topic == TOPIC_VALUES:
                 if rec.get("offset", 1) == 1:
@@ -554,10 +556,10 @@ def load_recording(path: Path) -> dict[str, Any]:
 
 
 def build_report(raw: dict[str, Any]) -> dict[str, Any]:
-    # cycle_intervals kommt bereits sitzungssicher an (siehe
-    # intra_session_intervals) - jeder Abstand hier liegt innerhalb einer
-    # ununterbrochenen Verbindung, keine Reconnect-/Backoff-Pause ist mehr
-    # dabei. Das Slot-Histogramm braucht also keine nachträgliche Bereinigung.
+    # cycle_intervals already arrives session-safe (see
+    # intra_session_intervals) - every interval here lies within an
+    # uninterrupted connection, no reconnect/backoff pause is included
+    # anymore. The slot histogram therefore needs no further cleanup.
     intervals = raw["cycle_intervals"]
     base, residuals = estimate_tick(intervals)
     report = dict(raw)
@@ -578,7 +580,7 @@ def build_report(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def analyse_channels(snapshots: list[tuple[float, dict[str, Any]]]) -> dict[str, Any]:
-    """Wertet Kanäle über den Mitschnitt aus: Sichtbarkeit, Alarme, Änderungsrate."""
+    """Evaluates channels across the recording: visibility, alarms, change rate."""
     if not snapshots:
         return {}
 
@@ -637,63 +639,63 @@ def _pct(values: list[float], p: float) -> float:
 def print_report(rep: dict[str, Any], channels: dict[str, Any] | None = None) -> None:
     dur = rep["duration_s"]
     print("=" * 66)
-    print("MESSBERICHT")
+    print("MEASUREMENT REPORT")
     print("=" * 66)
-    print(f"Dauer                 {dur:.0f}s ({dur / 60:.1f} min)")
+    print(f"Duration              {dur:.0f}s ({dur / 60:.1f} min)")
     print(f"Frames                {rep['frames']}  ({rep['bytes'] / 1024:.0f} KiB)")
     if dur > 0 and rep["bytes"]:
-        print(f"Hochgerechnet         {rep['bytes'] / dur * 86400 / 1024 / 1024:.0f} MB/Tag")
-    print(f"Verbindungsaufbauten  {rep['connects']}  "
-          f"(davon Reconnects {max(0, rep['connects'] - 1)})")
-    print(f"Watchdog ausgelöst    {rep['watchdog_trips']}")
+        print(f"Extrapolated          {rep['bytes'] / dur * 86400 / 1024 / 1024:.0f} MB/day")
+    print(f"Connections opened    {rep['connects']}  "
+          f"(of which reconnects {max(0, rep['connects'] - 1)})")
+    print(f"Watchdog triggered    {rep['watchdog_trips']}")
     print()
 
     print("Topics:")
     for topic, count in sorted(rep["topics"].items(), key=lambda kv: -kv[1]):
         per = f"{dur / count:.1f}s" if count else "-"
-        print(f"  {topic:20} {count:6d}   alle {per}")
+        print(f"  {topic:20} {count:6d}   every {per}")
     print()
 
-    print(f"Zyklen vollständig    {rep['cycles_done']}")
-    print(f"Zyklen abgebrochen    {rep['cycles_aborted']}")
+    print(f"Cycles complete       {rep['cycles_done']}")
+    print(f"Cycles aborted        {rep['cycles_aborted']}")
     base = rep.get("tick_base")
     if base:
-        print(f"Grundtakt (geschätzt) {base:.2f}s   "
-              f"max. Abweichung {rep['tick_residual_max']:.2f}s")
+        print(f"Base tick (estimated) {base:.2f}s   "
+              f"max. deviation {rep['tick_residual_max']:.2f}s")
         exp, missed = rep["slots_expected"], rep["slots_missed"]
         rate = missed / exp * 100 if exp else 0
-        print(f"Erwartete Slots       {exp}   ausgefallen {missed} ({rate:.1f}%)"
-              "   [nur waehrend bestehender Verbindung]")
-        print(f"Slot-Histogramm       {rep['slot_histogram']}"
-              "   (1 = kein Ausfall)")
+        print(f"Expected slots        {exp}   missed {missed} ({rate:.1f}%)"
+              "   [only while connected]")
+        print(f"Slot histogram        {rep['slot_histogram']}"
+              "   (1 = no drop)")
     if rep.get("outage_count"):
-        print(f"Reconnect-Ausfallzeit {rep['outage_seconds']:.0f}s "
-              f"in {rep['outage_count']} Lücke(n)   "
-              "[separat von der Tick-Ausfallrate oben, per connect/disconnect gemessen]")
-    print(f"Längste Frame-Lücke   {rep['longest_gap']:.1f}s")
+        print(f"Reconnect outage time {rep['outage_seconds']:.0f}s "
+              f"in {rep['outage_count']} gap(s)   "
+              "[separate from the tick outage rate above, measured via connect/disconnect]")
+    print(f"Longest frame gap     {rep['longest_gap']:.1f}s")
     print()
 
     if rep.get("http_latency"):
         lat = rep["http_latency"]
-        print(f"HTTP-Latenz (n={len(lat)})  median {_pct(lat, 50) * 1000:.0f}ms   "
+        print(f"HTTP latency (n={len(lat)})  median {_pct(lat, 50) * 1000:.0f}ms   "
               f"p95 {_pct(lat, 95) * 1000:.0f}ms   max {max(lat) * 1000:.0f}ms")
         print()
 
     if rep.get("errors"):
-        print("Fehler:")
+        print("Errors:")
         for key, count in sorted(rep["errors"].items(), key=lambda kv: -kv[1]):
             print(f"  {key:30} {count}")
         print()
 
     if channels:
         print("-" * 66)
-        print(f"Kanäle gesamt         {channels['channels']}")
+        print(f"Channels total        {channels['channels']}")
         print(f"  visible: true       {channels['visible_true']}")
         print(f"  visible: false      {len(channels['visible_false'])}")
         for key in channels["visible_false"]:
             print(f"      {key}")
         if channels["non_dict"]:
-            print(f"  kein Wertobjekt     {len(channels['non_dict'])}")
+            print(f"  no value object     {len(channels['non_dict'])}")
             for key in channels["non_dict"]:
                 print(f"      {key}")
         if channels["alarm_true"]:
@@ -701,27 +703,27 @@ def print_report(rep: dict[str, Any], channels: dict[str, Any] | None = None) ->
             for key in channels["alarm_true"]:
                 print(f"      {key}")
         if channels["visible_flips"]:
-            print(f"  visible gewechselt  {channels['visible_flips']}")
+            print(f"  visible changed     {channels['visible_flips']}")
         else:
-            print("  visible gewechselt  keine")
+            print("  visible changed     none")
         print()
 
         snaps = channels["snapshots"]
         changed = channels["changes"]
-        print(f"Wertänderungen über {snaps} Zyklen "
-              f"(entscheidet die Entprellung, Konzept 5.6):")
+        print(f"Value changes over {snaps} cycles "
+              f"(decides the debouncing, concept 5.6):")
         if not changed:
-            print("  kein Kanal hat sich geändert")
+            print("  no channel changed")
         for key, count in changed.most_common(15):
-            print(f"  {key:44} {count:5d}  ({count / snaps * 100:5.1f}% der Zyklen)")
+            print(f"  {key:44} {count:5d}  ({count / snaps * 100:5.1f}% of cycles)")
         quiet = channels["channels"] - len(changed)
-        print(f"  … {quiet} Kanäle unverändert")
+        print(f"  ... {quiet} channels unchanged")
         if dur > 0:
             naive = channels["channels"] * snaps
             real = sum(changed.values())
             print()
-            print(f"  Ohne Entprellung  {naive / dur * 86400:,.0f} State-Writes/Tag")
-            print(f"  Nur bei Änderung  {real / dur * 86400:,.0f} State-Writes/Tag"
+            print(f"  Without debouncing  {naive / dur * 86400:,.0f} state writes/day")
+            print(f"  Only on change      {real / dur * 86400:,.0f} state writes/day"
                   f"   ({real / naive * 100:.1f}%)" if naive else "")
     print("=" * 66)
 
@@ -729,7 +731,7 @@ def print_report(rep: dict[str, Any], channels: dict[str, Any] | None = None) ->
 def run_report(args: argparse.Namespace) -> int:
     path = Path(args.recording)
     if not path.exists():
-        print(f"Datei nicht gefunden: {path}", file=sys.stderr)
+        print(f"File not found: {path}", file=sys.stderr)
         return 1
     raw = load_recording(path)
     snapshots = raw.pop("_snapshots", [])
@@ -738,43 +740,43 @@ def run_report(args: argparse.Namespace) -> int:
         channels = None
     print_report(build_report(raw), channels)
     if not snapshots:
-        print("\nHinweis: Mitschnitt ohne Rohdaten (--no-raw) — "
-              "Kanalauswertung nicht möglich.")
+        print("\nNote: recording without raw data (--no-raw) - "
+              "channel evaluation not possible.")
     return 0
 
 
-# ----------------------------------------------------------------------- CLI
+# ------------------------------------------------------------------------- CLI
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Ohne das bleibt stdout blockgepuffert, sobald es in eine Datei umgeleitet
-    # oder von einem Wrapper mitgeschnitten wird - die Statuszeilen von
-    # _status_loop kämen dann erst beim Prozessende an, nicht laufend.
+    # Without this, stdout stays block-buffered as soon as it's redirected
+    # to a file or captured by a wrapper - the status lines from
+    # _status_loop would then only arrive at process exit, not continuously.
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(
         prog="ws_probe",
-        description="Mitschnitt und Auswertung des PoolDose-WebSockets.")
+        description="Recording and evaluation of the PoolDose WebSocket.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    rec = sub.add_parser("record", help="Verbinden, zuhören, mitschneiden")
-    rec.add_argument("--host", required=True, help="IP oder Hostname des Geräts")
+    rec = sub.add_parser("record", help="Connect, listen, record")
+    rec.add_argument("--host", required=True, help="IP or hostname of the device")
     rec.add_argument("--port", type=int, default=DEFAULT_PORT)
     rec.add_argument("--duration", type=float, default=0,
-                     help="Sekunden; 0 = bis Strg+C (Vorgabe)")
+                     help="Seconds; 0 = until Ctrl+C (default)")
     rec.add_argument("--out", default=None,
-                     help="Zieldatei (.jsonl oder .jsonl.gz). Ohne Angabe nur Statistik.")
+                     help="Target file (.jsonl or .jsonl.gz). Without it, statistics only.")
     rec.add_argument("--watchdog", type=float, default=DEFAULT_WATCHDOG,
-                     help=f"Sekunden ohne Frame bis Reconnect (Vorgabe {DEFAULT_WATCHDOG:.0f})")
-    rec.add_argument("--http-probe", type=float, default=0, metavar="SEK",
-                     help="HTTP-Latenz alle SEK Sekunden mitmessen; 0 = aus")
+                     help=f"Seconds without a frame until reconnect (default {DEFAULT_WATCHDOG:.0f})")
+    rec.add_argument("--http-probe", type=float, default=0, metavar="SEC",
+                     help="Measure HTTP latency every SEC seconds; 0 = off")
     rec.add_argument("--no-raw", dest="raw", action="store_false",
-                     help="Nur Metadaten mitschneiden, keine Nutzdaten (kleine Dateien)")
+                     help="Record metadata only, no payload (small files)")
     rec.add_argument("--keep-serial", dest="redact_serial", action="store_false",
-                     help="Seriennummer im Mitschnitt belassen (Vorgabe: ersetzen)")
+                     help="Keep the serial number in the recording (default: replace)")
     rec.set_defaults(raw=True, redact_serial=True)
 
-    rep = sub.add_parser("report", help="Mitschnitt auswerten")
-    rep.add_argument("recording", help="Pfad zur .jsonl oder .jsonl.gz")
+    rep = sub.add_parser("report", help="Evaluate a recording")
+    rep.add_argument("recording", help="Path to the .jsonl or .jsonl.gz")
 
     args = parser.parse_args(argv)
     if args.cmd == "record":

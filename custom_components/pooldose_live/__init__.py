@@ -1,6 +1,6 @@
-"""Die pooldose_live-Integration - eigene Domain, parallel zur
-Core-Integration `pooldose` installierbar (Konzept §5.1). Seit P4 auch
-schreibend (number/select/switch, siehe entity.py/pooldose_live.write).
+"""The pooldose_live integration - own domain, installable in parallel with
+the core integration `pooldose` (concept §5.1). Writable since P4
+(number/select/switch, see entity.py/pooldose_live.write).
 """
 
 from __future__ import annotations
@@ -22,11 +22,11 @@ PLATFORMS: list[Platform] = [
 async def async_setup_entry(hass: HomeAssistant, entry: PooldoseLiveConfigEntry) -> bool:
     """Set up pooldose_live from a config entry.
 
-    Bewusst KEIN `await coordinator.async_config_entry_first_refresh()`: das
-    würde auf die erste Nachricht warten, und die kann laut Konzept §8.2/§8.3
-    mehrere Minuten auf sich warten lassen. Der Coordinator startet seinen
-    Hintergrund-Task und der Entry-Setup kehrt sofort zurück; Entities
-    entstehen dynamisch, sobald Daten da sind (siehe sensor.py/binary_sensor.py).
+    Deliberately NOT `await coordinator.async_config_entry_first_refresh()`:
+    that would wait for the first message, and per concept §8.2/§8.3 that
+    can take several minutes. The coordinator starts its background task
+    and entry setup returns immediately; entities appear dynamically once
+    data arrives (see sensor.py/binary_sensor.py).
     """
     coordinator = PooldoseLiveCoordinator(hass, entry)
     entry.runtime_data = coordinator

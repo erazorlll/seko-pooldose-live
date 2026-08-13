@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Kopiert src/pooldose_live/ nach custom_components/pooldose_live/vendor/pooldose_live/.
+"""Copies src/pooldose_live/ to custom_components/pooldose_live/vendor/pooldose_live/.
 
-Für eine echte HACS-Installation muss die Komponente self-contained sein
-(siehe custom_components/pooldose_live/vendor/README.md) - dieses Skript hält
-die vendorte Kopie synchron, nachdem an der Bibliothek etwas geändert wurde.
+For a real HACS installation the component must be self-contained (see
+custom_components/pooldose_live/vendor/README.md) - this script keeps the
+vendored copy in sync after something changes in the library.
 
-`probe.py` wird bewusst ausgelassen: reines P1-CLI-Tooling, HA braucht es nicht.
+`probe.py` is deliberately left out: pure P1 CLI tooling, HA doesn't need it.
 
-Ausführen: python tools/sync_vendor.py
-Danach pruefen: python tools/check_vendor_sync.py
+Run: python tools/sync_vendor.py
+Then check: python tools/check_vendor_sync.py
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ EXCLUDE_MAPPINGS = {"__pycache__"}
 
 def main() -> int:
     if not SRC.is_dir():
-        print(f"Quelle nicht gefunden: {SRC}", file=sys.stderr)
+        print(f"Source not found: {SRC}", file=sys.stderr)
         return 1
 
     DEST.mkdir(parents=True, exist_ok=True)
@@ -48,7 +48,7 @@ def main() -> int:
                 shutil.copy2(sub, dest_mappings / sub.name)
                 copied.append(f"mappings/{sub.name}")
 
-    print(f"{len(copied)} Datei(en) kopiert nach {DEST}:")
+    print(f"{len(copied)} file(s) copied to {DEST}:")
     for name in copied:
         print(f"  {name}")
     return 0

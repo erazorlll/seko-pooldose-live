@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Prüft, ob custom_components/pooldose_live/vendor/pooldose_live/ noch mit
-src/pooldose_live/ übereinstimmt (Inhalt, byte-genau, außer `probe.py`).
+"""Checks whether custom_components/pooldose_live/vendor/pooldose_live/ still
+matches src/pooldose_live/ (content, byte-exact, except `probe.py`).
 
-Exit 0 = synchron, Exit 1 = Drift gefunden (Details ausgegeben). Teil von
-.github/workflows/validate.yml - läuft bei jedem Push/PR.
+Exit 0 = in sync, exit 1 = drift found (details printed). Part of
+.github/workflows/validate.yml - runs on every push/PR.
 
-Ausführen: python tools/check_vendor_sync.py
-Bei Drift: python tools/sync_vendor.py
+Run: python tools/check_vendor_sync.py
+On drift: python tools/sync_vendor.py
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _tracked_files(root: Path) -> dict[str, Path]:
 
 def main() -> int:
     if not SRC.is_dir() or not DEST.is_dir():
-        print(f"Quelle oder Ziel fehlt: {SRC} / {DEST}", file=sys.stderr)
+        print(f"Source or destination missing: {SRC} / {DEST}", file=sys.stderr)
         return 1
 
     src_files = _tracked_files(SRC)
@@ -48,22 +48,22 @@ def main() -> int:
     problems: list[str] = []
     for name in sorted(src_files.keys() | dest_files.keys()):
         if name not in dest_files:
-            problems.append(f"fehlt in vendor/: {name}")
+            problems.append(f"missing in vendor/: {name}")
             continue
         if name not in src_files:
-            problems.append(f"nur in vendor/, nicht in src/: {name}")
+            problems.append(f"only in vendor/, not in src/: {name}")
             continue
         if src_files[name].read_bytes() != dest_files[name].read_bytes():
-            problems.append(f"unterschiedlich: {name}")
+            problems.append(f"different: {name}")
 
     if problems:
-        print("Vendorte Kopie ist NICHT synchron mit src/pooldose_live/:")
+        print("Vendored copy is NOT in sync with src/pooldose_live/:")
         for p in problems:
             print(f"  - {p}")
         print("\nFix: python tools/sync_vendor.py")
         return 1
 
-    print(f"OK - {len(src_files)} Datei(en) synchron.")
+    print(f"OK - {len(src_files)} file(s) in sync.")
     return 0
 
 

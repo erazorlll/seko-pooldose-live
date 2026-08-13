@@ -1,90 +1,92 @@
-# PoolDose WebSocket — Reverse-Engineering-Ergebnisse
+# PoolDose WebSocket — reverse-engineering results
 
-Kontext für die Implementierung eines lokalen Push-Clients für die SEKO PoolDose.
-Alle Angaben stammen aus einem Mitschnitt am realen Gerät (Stand: siehe Git-History).
+Context for implementing a local push client for the SEKO PoolDose.
+All details come from a recording on the real device (see git history for
+the date).
 
-## Ziel
+## Goal
 
-Die offizielle Home-Assistant-Core-Integration (`pooldose`, Lib `python-pooldose`)
-pollt eine HTTP-API alle **600 s**. Begründung in der Doku: Das Gerät verträgt
-keine häufigen Anfragen.
+The official Home Assistant core integration (`pooldose`, lib
+`python-pooldose`) polls an HTTP API every **600 s**. Rationale in the docs:
+the device can't handle frequent requests.
 
-Das Gerät bietet daneben einen **lokalen WebSocket-Server**, der Daten von sich
-aus im ~4-Sekunden-Takt pusht. Der Client soll diesen Stream abonnieren statt zu
-pollen — das ist ~140× aktueller **und** erzeugt weniger Last als der bisherige
-Poll.
+The device also offers a **local WebSocket server** that pushes data on its
+own at a ~4-second tick. The client should subscribe to this stream instead
+of polling — that's ~140× fresher **and** generates less load than the
+current poll.
 
-## Gerät
+## Device
 
 | | |
 |---|---|
-| Modell | SEKO PoolDose Double **Spa** |
+| Model | SEKO PoolDose Double **Spa** |
 | PRODUCT_CODE | `PDPR1H04AW100` |
 | Firmware | `539292` |
-| Serial / Device-Key | `012600002BB3_DEVICE` |
-| IP | `192.168.0.74` (konfigurierbar machen) |
+| Serial / device key | `012600002BB3_DEVICE` |
+| IP | `192.168.0.74` (make configurable) |
 | WebSocket | `ws://192.168.0.74:1334/` |
-| Web-UI / HTTP-API | Port 80 |
+| Web UI / HTTP API | port 80 |
 
-## Protokoll
+## Protocol
 
-### Verbindung
+### Connection
 
-- **Keine Authentifizierung.** Verbindung öffnen genügt.
-- **Kein Subscribe-/Login-Frame nötig.** Der Client sendet nichts; das Gerät
-  pusht von sich aus. Verifiziert: ein reiner Listener ohne einen einzigen
-  ausgehenden Frame erhält den vollständigen Datenstrom.
-- Kein Keepalive vom Client nötig.
+- **No authentication.** Opening the connection is enough.
+- **No subscribe/login frame needed.** The client sends nothing; the device
+  pushes on its own. Verified: a pure listener that never sends a single
+  outgoing frame receives the full data stream.
+- No keepalive needed from the client.
 
-### Frame-Format
+### Frame format
 
-JSON-Textframes:
+JSON text frames:
 
 ```json
 { "topic": "<name>", "data": { ... } }
 ```
 
-Beobachtete Topics:
+Observed topics:
 
-| Topic | Frequenz | Inhalt |
+| Topic | Frequency | Content |
 |---|---|---|
-| `instant_values` | jeder Tick (~4,2 s) | Messwerte, Konfiguration, Status — **das Nutzsignal** |
-| `wifi_station` | ~16,8 s (jeder 4. Tick) | WLAN-Verbindungsdaten |
-| `time` | ~25,2 s (jeder 6. Tick) | Gerätezeit |
-| `wifi_status` | selten / initial | |
-| `wdp_status` | selten | |
+| `instant_values` | every tick (~4.2 s) | readings, configuration, status — **the payload signal** |
+| `wifi_station` | ~16.8 s (every 4th tick) | WiFi connection data |
+| `time` | ~25.2 s (every 6th tick) | device time |
+| `wifi_status` | rare / initial | |
+| `wdp_status` | rare | |
 
 ### Timing
 
-Fester Scheduler-Tick von **4,2 s**; alle beobachteten Abstände sind exakte
-Vielfache davon.
+Fixed scheduler tick of **4.2 s**; all observed intervals are exact
+multiples of it.
 
-**Wichtig:** Ticks fallen aus. Im Mitschnitt kamen nur 16 von 24 erwarteten
-`instant_values`-Zyklen an (effektiv ~5,8 s Durchschnitt, längste Lücke 16 s).
-Die Aussetzer korrelieren mit `wifi_station`/`time`-Frames — das Gerät verwirft
-offenbar eigene Sendeslots unter Last.
+**Important:** ticks get dropped. In the recording, only 16 of 24 expected
+`instant_values` cycles arrived (effectively ~5.8 s average, longest gap
+16 s). The dropouts correlate with `wifi_station`/`time` frames — the device
+apparently discards its own send slots under load.
 
-→ Kein festes Intervall annehmen. **Watchdog: 30 s ohne Frame → Reconnect.**
+→ Don't assume a fixed interval. **Watchdog: 30 s without a frame →
+reconnect.**
 
 ### Chunking
 
-`instant_values` wird auf **2 Frames** aufgeteilt:
+`instant_values` is split into **2 frames**:
 
 ```json
-"progressInfo": { "total": 2, "offset": 1 }   // bzw. offset: 2
+"progressInfo": { "total": 2, "offset": 1 }   // or offset: 2
 ```
 
-- **Chunk 1 (offset 1):** `deviceInfo`, Sensoren (pH, ORP, ppm, Temperatur),
-  Sollwerte, Kalibrierung, Dosier-Konfiguration
-- **Chunk 2 (offset 2):** Timer und ~30 Statusflags
+- **Chunk 1 (offset 1):** `deviceInfo`, sensors (pH, ORP, ppm, temperature),
+  target values, calibration, dosing configuration
+- **Chunk 2 (offset 2):** timers and ~30 status flags
 
-Beide sind flache Dicts unter demselben Serial-Key und **überschneidungsfrei** —
-ein `dict.update()` reicht zum Mergen.
+Both are flat dicts under the same serial key and **non-overlapping** — a
+`dict.update()` is enough to merge them.
 
-Reassembly-Regeln:
-1. Bei `offset == 1` den Puffer **leeren** (halbe Zyklen sind real, sonst
-   entstehen Frankenstein-Datensätze aus zwei Runden).
-2. Erst bei `offset == total` weiterverarbeiten.
+Reassembly rules:
+1. On `offset == 1`, **clear** the buffer (half-cycles are real; otherwise
+   you get Frankenstein records mixing two rounds).
+2. Only process once `offset == total`.
 
 ```python
 buf = {}
@@ -101,20 +103,20 @@ def on_message(raw):
     return dict(buf) if p["offset"] == p["total"] else None
 ```
 
-## Datenstruktur
+## Data structure
 
 ```
-data.devicedata.<SERIAL>_DEVICE.<PRODUCT_CODE>_FW<FW>_<typ>_<hash>
+data.devicedata.<SERIAL>_DEVICE.<PRODUCT_CODE>_FW<FW>_<type>_<hash>
 ```
 
-Zusätzlich unter demselben Serial-Key:
+Also under the same serial key:
 - `deviceInfo`: `{"dwi_status": "ok", "modbus_status": "on"}`
 - `collapsed_bar`: `[]`
 
-Einige Keys weichen vom Hash-Schema ab und sind sprechend, z. B.
+Some keys deviate from the hash scheme and are human-readable, e.g.
 `PDPR1H04AW100_FW539292_Elapsed_PowerON_Delay`.
 
-### Wertobjekte
+### Value objects
 
 ```json
 {
@@ -129,64 +131,65 @@ Einige Keys weichen vom Hash-Schema ab und sind sprechend, z. B.
 }
 ```
 
-| Feld | Bedeutung |
+| Field | Meaning |
 |---|---|
-| `current` | Istwert |
-| `set` | Sollwert (nur bei einstellbaren Parametern) |
-| `absMin` / `absMax` | technischer Wertebereich |
-| `minT` / `maxT` | Alarmschwellen |
-| `alarm` | Alarmzustand des Kanals |
-| `visible` | ob der Kanal am Gerät konfiguriert/aktiv ist |
-| `magnitude` | `[Anzeigeeinheit, Einheitskonstante]` |
-| `resolution` | Schrittweite, kann `"NA"` sein |
-| `comboitems` | bei Auswahlfeldern: Liste `[[index, labelkey], ...]` |
+| `current` | actual value |
+| `set` | target value (only for adjustable parameters) |
+| `absMin` / `absMax` | technical value range |
+| `minT` / `maxT` | alarm thresholds |
+| `alarm` | alarm state of the channel |
+| `visible` | whether the channel is configured/active on the device |
+| `magnitude` | `[display unit, unit constant]` |
+| `resolution` | step size, can be `"NA"` |
+| `comboitems` | for selection fields: list `[[index, labelkey], ...]` |
 
-**`visible: false` als Filter benutzen.** Beispiel aus dem Mitschnitt: Der
-ppm-Kanal (freies Chlor) steht auf `visible: false`, `current: 0`, `alarm: true`
-— es hängt keine Sonde dran. Ohne Filter entstehen Entities mit permanentem,
-nie verschwindendem Alarm.
+**Use `visible: false` as a filter.** Example from the recording: the ppm
+channel (free chlorine) is `visible: false`, `current: 0`, `alarm: true` —
+no probe is attached. Without filtering, you get entities with a permanent,
+never-clearing alarm.
 
-Achtung: Manche Einträge sind **kein Objekt**, sondern ein blanker Boolean
-(z. B. `..._w_1emtltkel: false`). Beim Parsen auf `isinstance(v, dict)` prüfen.
+Careful: some entries are **not an object**, but a bare boolean (e.g.
+`..._w_1emtltkel: false`). Check with `isinstance(v, dict)` while parsing.
 
-### Bekannte Keys (aus dem Mitschnitt abgeleitet)
+### Known keys (derived from the recording)
 
-| Hash-Key | Bedeutung | Beispielwert |
+| Hash key | Meaning | Example value |
 |---|---|---|
-| `w_1ekeigkin` | pH Istwert | 7.2 |
-| `w_1ekeiqfat` | pH Sollwert | 7.1 |
-| `w_1eklenb23` | ORP/Redox Istwert | 845 mV |
-| `w_1eklgnjk2` | ORP Sollwert | 675 mV |
-| `w_1eo03t46k` | Freies Chlor (ppm), inaktiv | 0 |
-| `w_1eommf39k` | Wassertemperatur | 34.5 °C |
-| `w_1eklg44ro` | pH-Dosierrichtung | `ACID` |
-| `w_1eklgnolb` | ORP-Dosierrichtung | `LOW` |
-| `w_1eklh8gb7` | pH-Kalibrierart | `2_POINTS` |
-| `w_1eklhs3b4` / `w_1eklhs65u` | pH-Kalibrierpunkte | 4 / 58 mV |
-| `w_1eklh8i5t` | ORP-Kalibrierart | `1_POINT` |
-| `w_1eklhs8r3` / `w_1eklhsase` | ORP-Kalibrierpunkte | 0 / 1.04 |
-| `w_1eklj6euj`, `w_1eo1s18s8`, `w_1eklj12vv`, `w_1eo1v3q21` | Dosiermodi | `PROPORTIONAL` |
+| `w_1ekeigkin` | pH actual value | 7.2 |
+| `w_1ekeiqfat` | pH target value | 7.1 |
+| `w_1eklenb23` | ORP/redox actual value | 845 mV |
+| `w_1eklgnjk2` | ORP target value | 675 mV |
+| `w_1eo03t46k` | free chlorine (ppm), inactive | 0 |
+| `w_1eommf39k` | water temperature | 34.5 °C |
+| `w_1eklg44ro` | pH dosing direction | `ACID` |
+| `w_1eklgnolb` | ORP dosing direction | `LOW` |
+| `w_1eklh8gb7` | pH calibration type | `2_POINTS` |
+| `w_1eklhs3b4` / `w_1eklhs65u` | pH calibration points | 4 / 58 mV |
+| `w_1eklh8i5t` | ORP calibration type | `1_POINT` |
+| `w_1eklhs8r3` / `w_1eklhsase` | ORP calibration points | 0 / 1.04 |
+| `w_1eklj6euj`, `w_1eo1s18s8`, `w_1eklj12vv`, `w_1eo1v3q21` | dosing modes | `PROPORTIONAL` |
 
-**Die Keys nicht selbst raten.** `python-pooldose` enthält vollständige
-Mapping-Tabellen für dieses Modell. Auflösen über:
+**Don't guess the keys yourself.** `python-pooldose` contains complete
+mapping tables for this model. Resolve via:
 
 ```bash
 pooldose --host 192.168.0.74 --analyze
-# oder direkt im Paketverzeichnis nach einem Hash greppen
+# or grep for a hash directly in the package directory
 ```
 
-Diese Mappings als Quelle der Wahrheit verwenden statt eigener Tabellen.
+Use these mappings as the source of truth instead of building our own
+tables.
 
-### Label-Dekodierung
+### Label decoding
 
-Enum-artige Werte kommen als i18n-Schlüssel in Pipes:
+Enum-like values come as i18n keys wrapped in pipes:
 
 ```
 "|PDPR1H04AW100_FW539292_LABEL_w_1eklg44ro_ACID|"
 ```
 
-**Nicht von rechts splitten** — `_2_POINTS` und `__C` (= °C) brechen dabei.
-Stattdessen den bekannten Präfix entfernen:
+**Don't split from the right** — `_2_POINTS` and `__C` (= °C) break that
+way. Instead, strip the known prefix:
 
 ```python
 def label(key, value, model, fw):
@@ -196,47 +199,48 @@ def label(key, value, model, fw):
     return value
 ```
 
-`comboitems` verwenden dasselbe Schema mit `COMBO` statt `LABEL`.
+`comboitems` use the same scheme with `COMBO` instead of `LABEL`.
 
-## Warum das gerätefreundlich ist
+## Why this is easy on the device
 
-`deviceInfo.modbus_status: "on"` — das WiFi-Modul spricht intern per Modbus mit
-dem Dosierregler und tut das **in seinem eigenen Takt, unabhängig von
-Zuhörern**. Ein zusätzlicher WebSocket-Listener erzeugt daher **keine
-zusätzliche Modbus-Last** auf dem Regler. Der einzige Pfad, über den die
-eigentliche Dosierregelung hätte gestört werden können, ist damit ausgeschlossen.
+`deviceInfo.modbus_status: "on"` — the WiFi module talks to the dosing
+controller internally over Modbus, and does so **on its own schedule,
+independent of listeners**. An additional WebSocket listener therefore
+creates **no additional Modbus load** on the controller. That rules out the
+one path through which the actual dosing control could have been disturbed.
 
-Trotzdem: **genau eine Verbindung halten.** Embedded-Stack mit wenigen Sockets;
-jeder Extra-Client verschärft die oben beobachteten Tick-Aussetzer. Web-UI-Tabs
-während des Betriebs schließen.
+Still: **keep exactly one connection.** This is an embedded stack with few
+sockets; every extra client makes the tick dropouts observed above worse.
+Close web UI tabs while it's running.
 
-## Schreibzugriffe — Vorsicht
+## Write access — caution
 
-Die Wertobjekte enthalten `set`, `absMin`, `absMax`, `resolution`, also
-Schreib-Metadaten. Über diesen Kanal lassen sich mit hoher Wahrscheinlichkeit
-auch Sollwerte verändern — **ohne erkennbare Authentifizierung**.
+The value objects contain `set`, `absMin`, `absMax`, `resolution` — i.e.
+write metadata. This channel very likely also allows changing target
+values — **with no apparent authentication**.
 
-Der Client soll zunächst **rein lesend** implementiert werden. Schreiben ist ein
-separates, bewusstes Feature. Ein falsch geformter Frame kann Parameter einer
-realen Dosieranlage verstellen.
+The client should initially be implemented **read-only**. Writing is a
+separate, deliberate feature. A malformed frame can change parameters of a
+real dosing system.
 
-## Anforderungen an die Implementierung
+## Implementation requirements
 
-- Python, async (`websockets` oder `aiohttp`)
-- Reconnect mit exponentiellem Backoff (Start ~2 s, Deckel ~60 s)
-- Watchdog: 30 s ohne Frame → Verbindung neu aufbauen
-- Host/Port konfigurierbar, keine Hardcodes
-- Robust gegen unvollständige Zyklen und unbekannte Topics
-- Ausgabe nach MQTT mit Home-Assistant-Discovery
-- **Entprellung/Throttling vor MQTT:** bei ~40 Entities à 4 s entstehen sonst
-  ~20 Mio. Recorder-Zeilen pro Jahr. Nur bei Wertänderung publizieren, plus
-  Heartbeat alle paar Minuten. Für Sensoren mit Rauschen (pH, ORP) ggf.
-  Mindest-Delta an `resolution` koppeln.
-- Availability-Topic für MQTT setzen (Last Will), damit HA den Ausfall sieht
+- Python, async (`websockets` or `aiohttp`)
+- Reconnect with exponential backoff (start ~2 s, cap ~60 s)
+- Watchdog: 30 s without a frame → rebuild the connection
+- Host/port configurable, no hardcoding
+- Robust against incomplete cycles and unknown topics
+- Output to MQTT with Home Assistant discovery
+- **Debouncing/throttling before MQTT:** with ~40 entities at 4 s intervals,
+  you'd otherwise get ~20 million recorder rows per year. Only publish on a
+  value change, plus a heartbeat every few minutes. For noisy sensors (pH,
+  ORP), consider tying the minimum delta to `resolution`.
+- Set an availability topic for MQTT (last will) so HA can see an outage
 
-## Offene Punkte
+## Open items
 
-- Verhalten bei mehreren gleichzeitigen Clients nicht systematisch getestet
-- Frames anderer Topics (`wdp_status`, `wifi_status`) noch nicht ausgewertet
-- Ob das Gerät bei Wertänderung außerhalb des Ticks sofort sendet: unbekannt
-- Schreib-Frame-Format: unbekannt (bewusst nicht getestet)
+- Behavior with multiple simultaneous clients not systematically tested
+- Frames of other topics (`wdp_status`, `wifi_status`) not yet evaluated
+- Whether the device sends immediately on a value change outside the tick:
+  unknown
+- Write frame format: unknown (deliberately untested)

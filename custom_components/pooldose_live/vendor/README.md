@@ -1,34 +1,35 @@
-# Vendorte Kopie von `pooldose_live`
+# Vendored copy of `pooldose_live`
 
-**Nicht direkt bearbeiten.** Dies ist eine 1:1-Kopie von
-[`src/pooldose_live/`](../../../src/pooldose_live/) (ohne `probe.py`, das ist
-reines P1-CLI-Tooling, das HA nicht braucht).
+**Don't edit directly.** This is a 1:1 copy of
+[`src/pooldose_live/`](../../../src/pooldose_live/) (minus `probe.py`, which
+is pure P1 CLI tooling that HA doesn't need).
 
-## Warum überhaupt eine Kopie?
+## Why a copy at all?
 
-Eine über HACS installierte Kopie von `custom_components/pooldose_live/` bringt
-sonst nichts weiter mit — die eigentliche Transport-/Decoder-/Mapping-Logik läge
-dann nur in `src/pooldose_live/`, das separat `pip install`-iert werden müsste.
-Das ist für eine echte Standalone-Installation nicht praktikabel (siehe Konzept §5,
-Entscheidung P6). Vendoring macht die Komponente self-contained: alles, was HACS
-kopiert, reicht zum Laufen.
+A copy of `custom_components/pooldose_live/` installed via HACS doesn't bring
+anything else along — the actual transport/decoder/mapping logic would then
+only live in `src/pooldose_live/`, which would have to be `pip install`-ed
+separately. That's not practical for a real standalone installation (see
+concept §5, decision P6). Vendoring makes the component self-contained:
+whatever HACS copies is enough to run.
 
-## Warum funktioniert das ohne Import-Umschreiben?
+## Why does this work without rewriting imports?
 
-`src/pooldose_live/` verwendet ausschließlich **relative Imports**
-(`from .channels import ...`, nicht `from pooldose_live.channels import ...`).
-Dadurch ist der Code an keine bestimmte Position in der Modul-Hierarchie
-gebunden — dieselben Dateien funktionieren unverändert sowohl als
-top-level-installiertes Paket (`pip install -e .`, für `tools/`/`probe.py`/Tests)
-als auch als Unterpaket hier unter `custom_components.pooldose_live.vendor.pooldose_live`.
+`src/pooldose_live/` uses exclusively **relative imports**
+(`from .channels import ...`, not `from pooldose_live.channels import ...`).
+That means the code isn't tied to any particular position in the module
+hierarchy — the same files work unchanged both as a top-level installed
+package (`pip install -e .`, for `tools/`/`probe.py`/tests) and as a
+subpackage here under
+`custom_components.pooldose_live.vendor.pooldose_live`.
 
-## Synchronisation
+## Synchronization
 
-`tools/check_vendor_sync.py` vergleicht beide Kopien und schlägt fehl, wenn sie
-auseinanderlaufen — lokal ausführbar, außerdem Teil der CI
-(`.github/workflows/validate.yml`). Bei einer Änderung an `src/pooldose_live/`:
+`tools/check_vendor_sync.py` compares both copies and fails if they've
+drifted apart — runnable locally, and also part of CI
+(`.github/workflows/validate.yml`). After a change to `src/pooldose_live/`:
 
 ```bash
-python tools/sync_vendor.py   # kopiert src/pooldose_live/ hierher (außer probe.py)
-python tools/check_vendor_sync.py   # zur Kontrolle
+python tools/sync_vendor.py   # copies src/pooldose_live/ here (except probe.py)
+python tools/check_vendor_sync.py   # to double-check
 ```
