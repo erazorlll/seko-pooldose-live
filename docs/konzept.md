@@ -372,6 +372,11 @@ Mapping beisteuern.
 
 ### 5.6 Entprellung / Recorder
 
+**Umgesetzt in P3** (`custom_components/pooldose_live/entity.py`): resolution-bewusster
+Änderungs-Filter pro Entity plus 5-Minuten-Heartbeat, zusätzlich zum groben
+Coordinator-weiten Gleichheits-Check aus P2. Details unten sind der ursprüngliche
+Entwurf, der so umgesetzt wurde.
+
 Das ist bei 4,2 s **die** kritische Stelle. Bei ~40 Entities und einem Write pro Tick
 wären das ~9,5 State-Writes/s. HA feuert bei jedem `async_write_ha_state()` ein
 `state_changed`-Event, und der Recorder schreibt pro Event eine Zeile — auch bei
@@ -487,7 +492,7 @@ kein Argument mehr gegen die Dauerverbindung als Kernidee.
 | **P0** ✅ | Standalone-Logger: WS mitschneiden, Ticks/Lücken/Reconnects zählen, Snapshots als JSONL | Datenbasis + Messungen aus §8, inkl. HTTP-Basislinie (§8.3) |
 | **P1** ✅ | Transport + Decoder + Mapping-Loader, ohne HA — inkl. Raw-Modus + FW-Fallback (vorgezogen aus P5, waren zum Testen des Loaders ohnehin nötig) | `python -m pooldose_live.probe --host …` zeigt aufgelöste Kanäle. Paket `src/pooldose_live/` |
 | **P2** ✅ | HA-Skelett: manifest, config_flow, coordinator, `sensor` + `binary_sensor`, read-only. Setup-Ablauf gegenüber der ursprünglichen Planung überarbeitet (§5.7) | `custom_components/pooldose_live/`, parallel zur Core-Integration installierbar |
-| **P3** | Entprellung, Verfügbarkeitslogik, Diagnostics | Recorder-tauglich, alltagstauglich |
+| **P3** ✅ | Entprellung (resolution-bewusst + Heartbeat), Verfügbarkeitslogik (Standby-Ausnahme, §8.4), `diagnostics.py` | Recorder-tauglich, alltagstauglich |
 | **P4** | Schreiben: `number`, `select`, `switch` über HTTP `setInstantValues` | Funktionsgleichstand mit Core |
 | **P5** | Repair-Issues bei FW-Fallback, Übersetzungen (de/en) | Restliche Punkte, Raw-Modus/FW-Fallback selbst bereits in P1 erledigt |
 | **P6** | HACS-Konformität: `hacs.json`, `version` im Manifest, Release-Tags, README | Installierbar über HACS |

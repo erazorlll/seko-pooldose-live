@@ -5,10 +5,9 @@ WebSocket** des Geräts statt HTTP-Polling.
 
 Zielgerät: SEKO PoolDose Double Spa (`PDPR1H04AW100`, FW `539292`).
 
-Status: **P2 — erstes HA-Skelett (read-only), parallel zur Core-Integration
-installierbar.** P0 (Messungen, Architekturentscheidungen) und P1
-(Transport/Decoder/Mapping-Bibliothek) sind abgeschlossen, siehe
-[docs/konzept.md](docs/konzept.md).
+Status: **P3 — Entprellung, Verfügbarkeitslogik, Diagnostics.** P0–P2
+(Messungen, Transport/Decoder/Mapping-Bibliothek, HA-Skelett) sind
+abgeschlossen, siehe [docs/konzept.md](docs/konzept.md).
 
 ## Warum
 
@@ -62,12 +61,28 @@ vollständigen `instant_values`-Zyklus. Das Gerät kann laut Konzept §8.2/§8.3
 legitim mehrere Minuten schweigen; ein Setup, das darauf wartet, würde
 regelmäßig grundlos fehlschlagen. Details in Konzept §5.7.
 
-Tests: `tests/test_p2_manual.py` — kein regulärer `pytest`-Lauf, da
-`pytest-homeassistant-custom-component` unter Windows an `homeassistant.runner`
-(braucht `fcntl`, Unix-only) scheitert. Stattdessen ein eigenständiges Skript
-mit echten HA-Kernklassen (`python tests/test_p2_manual.py`). Auf einer
-echten (Linux-)HA-Instanz sollte das durch reguläre pytest-Fixtures
-ersetzt/ergänzt werden.
+## Entprellung, Verfügbarkeit, Diagnostics (P3)
+
+- **Entprellung** (`entity.py`): pro Entity nur schreiben bei relevanter Änderung
+  (resolution-bewusst bei Zahlen) oder alle 5 Minuten (Heartbeat), zusätzlich zum
+  groben Coordinator-weiten Gleichheits-Check aus P2. Ohne das würde jede der
+  ~40–70 Entities bei jeder Änderung eines beliebigen Kanals neu schreiben —
+  siehe Konzept §5.6/§8.2 für die Zahlen (422.600 vs. 6.200 Writes/Tag).
+- **Verfügbarkeit**: Entities werden `unavailable`, wenn der Staleness-Watchdog
+  (Konzept §5.3) anschlägt — außer `alarm_system_standby`, das bewusst auch
+  während Staleness sichtbar bleibt, weil es selbst das wahrscheinlichste
+  Diagnose-Signal für die Ursache ist (Konzept §8.4).
+- **`diagnostics.py`**: letzter Roh-Snapshot (Seriennummer redigiert) plus
+  Sitzungsstatistik (Reconnects, längste Lücke, Mapping-Status/Abdeckung) —
+  exportierbar direkt aus HA, dasselbe Material wie Issue #20 bei
+  lmaertin/python-pooldose, ohne CLI-Gefummel.
+
+Tests: `tests/test_p2_manual.py` + `tests/test_p3_manual.py` — kein regulärer
+`pytest`-Lauf, da `pytest-homeassistant-custom-component` unter Windows an
+`homeassistant.runner` (braucht `fcntl`, Unix-only) scheitert. Stattdessen
+eigenständige Skripte mit echten HA-Kernklassen (`python tests/test_p2_manual.py`,
+`python tests/test_p3_manual.py`). Auf einer echten (Linux-)HA-Instanz sollte
+das durch reguläre pytest-Fixtures ersetzt/ergänzt werden.
 
 ## Dokumente
 
