@@ -17,7 +17,7 @@ import time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -67,12 +67,11 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
 
     async def _run(self) -> None:
         async for event in self.transport.events():
-            self._handle_event(event)
+            await self._handle_event(event)
 
-    @callback
-    def _handle_event(self, event: TransportEvent) -> None:
+    async def _handle_event(self, event: TransportEvent) -> None:
         if event.kind == "snapshot":
-            self._handle_snapshot(event)
+            await self._handle_snapshot(event)
         elif event.kind == "stale":
             if not self.is_stale:
                 self.is_stale = True
@@ -92,7 +91,7 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
                 "%s: %s%s", self.host, event.kind, f" ({event.reason})" if event.reason else ""
             )
 
-    def _handle_snapshot(self, event: TransportEvent) -> None:
+    async def _handle_snapshot(self, event: TransportEvent) -> None:
         now = time.monotonic()
         if self.last_snapshot_time is not None:
             self.longest_gap = max(self.longest_gap, now - self.last_snapshot_time)
@@ -107,7 +106,14 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
             prefix = detect_prefix(event.devicedata or {})
             if prefix is None:
                 return
-            self.mapping = load_mapping(*prefix)
+            # load_mapping() does blocking file I/O (importlib.resources +
+            # reading the matched JSON file) - must not run directly on the
+            # event loop (HA's blocking-call guard flags exactly this; see
+            # the incident that also uncovered the vendored-import bug this
+            # function used to crash on). Executor job, not just a "meh,
+            # it's small" shortcut - this is the same class of mistake that
+            # bit us once already.
+            self.mapping = await self.hass.async_add_executor_job(load_mapping, *prefix)
             self._report_mapping_status()
 
         resolved = self.mapping.resolve_all(channels)

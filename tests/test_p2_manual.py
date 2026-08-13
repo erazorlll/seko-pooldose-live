@@ -72,7 +72,7 @@ async def main() -> None:
     # --- Test 1: process a snapshot --------------------------------------
     assert coordinator.data == {}, "Coordinator should be empty before the first snapshot"
 
-    coordinator._handle_event(TransportEvent(
+    await coordinator._handle_event(TransportEvent(
         kind="snapshot", t=1.0, device_id="TESTSERIAL_DEVICE", devicedata=SAMPLE_DEVICEDATA,
     ))
 
@@ -92,7 +92,7 @@ async def main() -> None:
 
     # --- Test 2: change gate - identical snapshot triggers no update -----
     updates_before = coordinator.data
-    coordinator._handle_event(TransportEvent(
+    await coordinator._handle_event(TransportEvent(
         kind="snapshot", t=5.2, device_id="TESTSERIAL_DEVICE", devicedata=SAMPLE_DEVICEDATA,
     ))
     assert coordinator.data is updates_before, (
@@ -105,7 +105,7 @@ async def main() -> None:
     changed["PDPR1H04AW100_FW539292_w_1ekeigkin"] = {
         **SAMPLE_DEVICEDATA["PDPR1H04AW100_FW539292_w_1ekeigkin"], "current": 7.3,
     }
-    coordinator._handle_event(TransportEvent(
+    await coordinator._handle_event(TransportEvent(
         kind="snapshot", t=9.4, device_id="TESTSERIAL_DEVICE", devicedata=changed,
     ))
     assert coordinator.data["ph"].display == 7.3
@@ -113,9 +113,9 @@ async def main() -> None:
 
     # --- Test 4: staleness transitions -------------------------------------
     assert coordinator.is_stale is False
-    coordinator._handle_event(TransportEvent(kind="stale", t=100.0, since=95.0))
+    await coordinator._handle_event(TransportEvent(kind="stale", t=100.0, since=95.0))
     assert coordinator.is_stale is True
-    coordinator._handle_event(TransportEvent(kind="fresh", t=101.0))
+    await coordinator._handle_event(TransportEvent(kind="fresh", t=101.0))
     assert coordinator.is_stale is False
     print("Test 4 (staleness transitions) OK")
 

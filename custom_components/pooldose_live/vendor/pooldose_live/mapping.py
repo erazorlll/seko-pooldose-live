@@ -61,13 +61,32 @@ class ResolvedChannel:
     step: Any = None
 
 
+def _mappings_package() -> str:
+    """Package name for the `mappings/` resources, relative to wherever this
+    module itself actually lives.
+
+    Deliberately NOT the literal string "pooldose_live.mappings": that only
+    resolves when `pooldose_live` is pip-installed as a top-level package
+    (true for local dev/tests, via `pip install -e .`) - not when vendored
+    into custom_components/pooldose_live/vendor/pooldose_live/, where this
+    module's real package is `custom_components.pooldose_live.vendor.
+    pooldose_live` and there is no top-level `pooldose_live` at all. A
+    hardcoded absolute name silently works in every local test (the dev
+    environment always has the standalone package installed too) and raises
+    `ModuleNotFoundError` only in a real HACS install - see the incident
+    that prompted this fix. `__package__` always reflects the actual
+    importing context, so this resolves correctly either way.
+    """
+    return f"{__package__}.mappings"
+
+
 def _list_mapping_files() -> list[str]:
-    files = importlib.resources.files("pooldose_live.mappings")
+    files = importlib.resources.files(_mappings_package())
     return [f.name for f in files.iterdir() if f.name.endswith(".json")]
 
 
 def _load_json(filename: str) -> dict[str, Any]:
-    path = importlib.resources.files("pooldose_live.mappings").joinpath(filename)
+    path = importlib.resources.files(_mappings_package()).joinpath(filename)
     with path.open("r", encoding="utf-8") as fh:
         return json.load(fh)
 

@@ -68,14 +68,14 @@ async def main() -> None:
     coordinator = PooldoseLiveCoordinator(hass, entry)
     entry.runtime_data = coordinator
 
-    coordinator._handle_event(TransportEvent(
+    await coordinator._handle_event(TransportEvent(
         kind="snapshot", t=1.0, device_id="TESTSERIAL_DEVICE", devicedata=PH_DATA,
     ))
     assert "ph" in coordinator.data
 
     # --- Test: diagnostics statistics --------------------------------------
-    coordinator._handle_event(TransportEvent(kind="connected", t=0.0))
-    coordinator._handle_event(TransportEvent(kind="watchdog", t=2.0, reason="test"))
+    await coordinator._handle_event(TransportEvent(kind="connected", t=0.0))
+    await coordinator._handle_event(TransportEvent(kind="watchdog", t=2.0, reason="test"))
     assert coordinator.stats["cycles"] == 1
     assert coordinator.stats["connects"] == 1
     assert coordinator.stats["watchdog_trips"] == 1

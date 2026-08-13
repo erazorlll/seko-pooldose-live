@@ -83,7 +83,7 @@ async def main() -> None:
 
     coordinator = PooldoseLiveCoordinator(hass, entry)
     entry.runtime_data = coordinator
-    coordinator._handle_event(TransportEvent(
+    await coordinator._handle_event(TransportEvent(
         kind="snapshot", t=1.0, device_id="TESTSERIAL_DEVICE", devicedata=DEVICE_DATA,
     ))
 

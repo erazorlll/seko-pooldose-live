@@ -53,7 +53,7 @@ async def main() -> None:
 
     # --- Test: EXACT -> no repair issue -------------------------------------
     c1 = _make_coordinator(hass, "10.0.0.1")
-    c1._handle_event(TransportEvent(kind="snapshot", t=1.0, device_id="D1",
+    await c1._handle_event(TransportEvent(kind="snapshot", t=1.0, device_id="D1",
                                     devicedata=EXACT_DATA))
     assert registry.async_get_issue(DOMAIN, f"{ISSUE_FW_FALLBACK}_10.0.0.1") is None
     assert registry.async_get_issue(DOMAIN, f"{ISSUE_RAW_MODE}_10.0.0.1") is None
@@ -61,7 +61,7 @@ async def main() -> None:
 
     # --- Test: FW_FALLBACK -> repair issue with correct placeholders -------
     c2 = _make_coordinator(hass, "10.0.0.2")
-    c2._handle_event(TransportEvent(kind="snapshot", t=1.0, device_id="D2",
+    await c2._handle_event(TransportEvent(kind="snapshot", t=1.0, device_id="D2",
                                     devicedata=FALLBACK_DATA))
     issue = registry.async_get_issue(DOMAIN, f"{ISSUE_FW_FALLBACK}_10.0.0.2")
     assert issue is not None, "FW_FALLBACK should have created a repair issue"
@@ -74,7 +74,7 @@ async def main() -> None:
 
     # --- Test: RAW -> a different repair issue ------------------------------
     c3 = _make_coordinator(hass, "10.0.0.3")
-    c3._handle_event(TransportEvent(kind="snapshot", t=1.0, device_id="D3",
+    await c3._handle_event(TransportEvent(kind="snapshot", t=1.0, device_id="D3",
                                     devicedata=RAW_DATA))
     issue = registry.async_get_issue(DOMAIN, f"{ISSUE_RAW_MODE}_10.0.0.3")
     assert issue is not None, "RAW should have created a repair issue"
