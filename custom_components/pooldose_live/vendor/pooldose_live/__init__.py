@@ -5,4 +5,4 @@ custom_components/pooldose_live/vendor/, see the README.md there).
 See docs/concept.md at the repo root for the full architecture plan.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
