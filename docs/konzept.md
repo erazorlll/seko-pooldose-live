@@ -304,6 +304,13 @@ Geräte ohnehin besser abfängt als Upstream.
 rohen Dict ohne HTTP zusagt. Das ist ein sinnvoller Upstream-Vorschlag von uns —
 dann bekäme auch die Bibliothek einen WS-Pfad.
 
+**Ergänzung aus P6:** Dieselbe Kopieren-statt-Abhängigkeit-Logik traf uns am Ende
+auch bei unserer EIGENEN Bibliothek `pooldose_live` — eine über HACS installierte
+Komponente bringt nur `custom_components/pooldose_live/` mit, nicht das separat
+`pip install`-ierte `src/pooldose_live/`. Gelöst durch Vendoring (`vendor/pooldose_live/`,
+1:1-Kopie, per Skript synchron gehalten) statt PyPI-Veröffentlichung — Details in
+`custom_components/pooldose_live/vendor/README.md`.
+
 ### 5.3 Schichten
 
 ```
@@ -540,7 +547,7 @@ kein Argument mehr gegen die Dauerverbindung als Kernidee.
 | **P3** ✅ | Entprellung (resolution-bewusst + Heartbeat), Verfügbarkeitslogik (Standby-Ausnahme, §8.4), `diagnostics.py` | Recorder-tauglich, alltagstauglich |
 | **P4** ✅ | Schreiben: `number`, `select`, `switch` über HTTP `setInstantValues`, ohne Vorab-GET (B8 vermieden) | Funktionsgleichstand mit Core. Noch nicht live gegen das echte Gerät getestet (siehe §5.9) |
 | **P5** ✅ | Repair-Issues bei FW-Fallback UND Raw-Modus (weiter gefasst als ursprünglich geplant), Übersetzungen (de/en) | Nutzer sieht sichtbar, wenn die Namensauflösung nicht optimal ist, mit Hinweis zum Beisteuern eines Mappings |
-| **P6** | HACS-Konformität: `hacs.json`, `version` im Manifest, Release-Tags, README | Installierbar über HACS |
+| **P6** ✅ | HACS-Konformität: `hacs.json`, Vendoring (löst die P2-Lücke), CI-Validierung, `LICENSE`, Release-Tag | Echt installierbar über HACS, nicht nur strukturell vorbereitet |
 | **P7** | Optional: WS-Schreibformat erforschen — **getrennt, mit Bedacht, nicht am Produktivgerät** | offen |
 
 Rückfluss nach oben: B3 (`visible`), B4 (`alarm`), B7 (fehlende Descriptions) und

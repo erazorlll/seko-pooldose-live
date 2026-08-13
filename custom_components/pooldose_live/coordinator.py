@@ -21,10 +21,10 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from pooldose_live.channels import decode_devicedata, detect_prefix
-from pooldose_live.mapping import MappingStatus, ModelMapping, ResolvedChannel
-from pooldose_live.mapping import load as load_mapping
-from pooldose_live.transport import PooldoseTransport, TransportEvent
+from .vendor.pooldose_live.channels import decode_devicedata, detect_prefix
+from .vendor.pooldose_live.mapping import MappingStatus, ModelMapping, ResolvedChannel
+from .vendor.pooldose_live.mapping import load as load_mapping
+from .vendor.pooldose_live.transport import PooldoseTransport, TransportEvent
 
 from .const import DOMAIN, ISSUE_FW_FALLBACK, ISSUE_RAW_MODE, ISSUES_URL
 

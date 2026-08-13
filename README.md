@@ -5,9 +5,20 @@ WebSocket** des Geräts statt HTTP-Polling.
 
 Zielgerät: SEKO PoolDose Double Spa (`PDPR1H04AW100`, FW `539292`).
 
-Status: **P5 — Repair-Issues, Übersetzungen.** P0–P4 sind abgeschlossen (Schreib-
-zugriff noch nicht live gegen das echte Gerät getestet), siehe
-[docs/konzept.md](docs/konzept.md).
+Status: **P6 — HACS-Konformität, echt installierbar.** P0–P5 sind abgeschlossen
+(Schreibzugriff noch nicht live gegen das echte Gerät getestet), siehe
+[docs/konzept.md](docs/konzept.md). Optional bleibt nur noch P7 (WS-Schreibformat
+erforschen, bewusst zurückhaltend).
+
+## Installation über HACS
+
+1. HACS → Integrationen → ⋮ → Benutzerdefinierte Repositories
+2. Dieses Repo als Typ „Integration" hinzufügen
+3. „SEKO PoolDose (Live)" installieren, Home Assistant neu starten
+4. Einstellungen → Geräte & Dienste → Integration hinzufügen → „SEKO PoolDose (Live)"
+
+Self-contained — `custom_components/pooldose_live/` bringt die Bibliothek
+vendort mit (`vendor/pooldose_live/`), kein separates `pip install` nötig.
 
 ## Warum
 
@@ -47,12 +58,6 @@ erzeugt (nicht aus einer festen Tabelle wie die Core-Integration — die
 Kanalmenge steht erst zur Laufzeit fest, je nach Mapping-Treffer oder
 Raw-Fallback). `visible: false`-Kanäle erzeugen keine Entity (Konzept B3),
 das `alarm`-Flag landet als Attribut am Sensor (Konzept B4).
-
-**Bekannte Lücke:** `manifest.json` hat `"requirements": []` — das Paket
-`pooldose_live` (siehe oben) muss aktuell im selben Python-Environment wie
-Home Assistant installiert sein (`pip install -e .` in diesem Repo, im
-venv von HA). Echte Distribution (PyPI-Release oder Vendoring in die
-Komponente) ist P6-Scope.
 
 **Setup wartet nicht auf Live-Daten:** Der Config Flow prüft nur, ob der
 WebSocket-Port antwortet (10 s Timeout) — er wartet nicht auf einen
@@ -117,6 +122,23 @@ Bibliothekslogik ohne HA-Abhängigkeit und läuft regulär über
 deaktiviert nur das global registrierte, unter Windows blockierte Plugin). Auf
 einer echten (Linux-)HA-Instanz sollten die manuellen Skripte durch reguläre
 pytest-Fixtures ersetzt/ergänzt werden.
+
+## HACS-Konformität (P6)
+
+- **Vendoring statt PyPI**: `custom_components/pooldose_live/vendor/pooldose_live/`
+  ist eine 1:1-Kopie von `src/pooldose_live/` (ohne `probe.py`, reines CLI-Tooling).
+  Löst die vorherige „Bekannte Lücke" — eine über HACS installierte Komponente war
+  bis P6 nicht lauffähig, weil die eigentliche Transport-/Decoder-/Mapping-Logik
+  separat `pip install`-iert werden musste. `manifest.json`s `"requirements": []`
+  ist jetzt tatsächlich korrekt, nicht nur ein Platzhalter.
+  Details: [`custom_components/pooldose_live/vendor/README.md`](custom_components/pooldose_live/vendor/README.md).
+- **Sync-Check**: `tools/check_vendor_sync.py` (auch `tests/test_vendor_sync.py`,
+  Teil der CI) stellt sicher, dass die vendorte Kopie nicht von `src/pooldose_live/`
+  abweicht. Nach Änderungen an der Bibliothek: `python tools/sync_vendor.py`.
+- **CI** (`.github/workflows/validate.yml`): `hacs/action`, `hassfest`, plus alle
+  eigenen Tests — läuft auf Linux-Runnern, wo das unter Windows blockierte
+  `pytest-homeassistant-custom-component`-Plugin problemlos lädt.
+- `hacs.json`, `LICENSE` (MIT), Versionsbump auf `0.2.0` (Paket + Manifest synchron).
 
 ## Dokumente
 

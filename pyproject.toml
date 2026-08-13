@@ -1,6 +1,6 @@
 [project]
 name = "pooldose-live"
-version = "0.1.0"
+version = "0.2.0"
 description = "Standalone Transport-/Decoder-/Mapping-Schicht für den lokalen SEKO-PoolDose-WebSocket (P1, ohne Home Assistant)"
 readme = "README.md"
 requires-python = ">=3.11"

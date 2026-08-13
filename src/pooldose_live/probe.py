@@ -16,9 +16,9 @@ import asyncio
 import sys
 from datetime import datetime
 
-from pooldose_live.channels import Channel, decode_devicedata, detect_prefix
-from pooldose_live.mapping import ModelMapping, ResolvedChannel, load as load_mapping
-from pooldose_live.transport import (
+from .channels import Channel, decode_devicedata, detect_prefix
+from .mapping import ModelMapping, ResolvedChannel, load as load_mapping
+from .transport import (
     DEFAULT_CONNECTION_WATCHDOG,
     DEFAULT_PORT,
     DEFAULT_STALENESS_TIMEOUT,

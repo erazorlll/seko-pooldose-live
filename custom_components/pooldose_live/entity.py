@@ -25,8 +25,8 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from pooldose_live.mapping import ResolvedChannel
-from pooldose_live.write import WriteError, set_channel
+from .vendor.pooldose_live.mapping import ResolvedChannel
+from .vendor.pooldose_live.write import WriteError, set_channel
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import PooldoseLiveCoordinator
