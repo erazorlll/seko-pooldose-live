@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Vendorte Mapping-Tabellen in src/pooldose_live/mappings/ und
-custom_components/pooldose_live/vendor/pooldose_live/mappings/ stammen aus
-lmaertin/python-pooldose (MIT, Copyright (c) 2025 Lukas Maertin) - siehe
-dortige ATTRIBUTION.md für Details.
