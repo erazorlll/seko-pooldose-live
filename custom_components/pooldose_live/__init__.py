@@ -38,4 +38,5 @@ async def async_setup_entry(hass: HomeAssistant, entry: PooldoseLiveConfigEntry)
 
 async def async_unload_entry(hass: HomeAssistant, entry: PooldoseLiveConfigEntry) -> bool:
     """Unload a config entry."""
+    entry.runtime_data.cleanup_issues()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

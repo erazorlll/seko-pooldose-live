@@ -15,5 +15,15 @@
     "abort": {
       "already_configured": "Dieses Gerät ist bereits eingerichtet."
     }
+  },
+  "issues": {
+    "fw_fallback": {
+      "title": "Kein Mapping für diese genaue Firmware",
+      "description": "Modell {model} meldet Firmware {fw_code}, gefunden wurde aber nur ein Mapping für Firmware {used_fw} desselben Modells. Kanalnamen und Optionen sollten meist trotzdem stimmen (die Hash-Keys sind in der Regel firmware-stabil), einzelne Entities können aber fehlen oder falsch benannt sein. Ein Mapping für Firmware {fw_code} beizusteuern wäre hilfreich - siehe Issue-Tracker."
+    },
+    "raw_mode": {
+      "title": "Kein Mapping für dieses Gerät gefunden",
+      "description": "Für Modell {model} (Firmware {fw_code}) wurde keine Mapping-Datei gefunden. Alle Kanäle werden mit generischen, Hash-basierten Namen angezeigt statt lesbaren (raw_*-Entities, standardmäßig deaktiviert). Die Integration funktioniert trotzdem, ein Mapping beizusteuern wäre aber hilfreich - siehe Issue-Tracker."
+    }
   }
 }

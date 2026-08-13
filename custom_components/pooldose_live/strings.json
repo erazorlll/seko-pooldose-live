@@ -15,5 +15,15 @@
     "abort": {
       "already_configured": "This device is already configured."
     }
+  },
+  "issues": {
+    "fw_fallback": {
+      "title": "No mapping for this exact firmware",
+      "description": "Model {model} reports firmware {fw_code}, but only a mapping for firmware {used_fw} of the same model was found. Channel names and options should still be correct in most cases (the hash keys are usually stable across firmware updates), but some entities may be missing or mislabeled. Consider contributing a mapping for firmware {fw_code} - see the issue tracker for how."
+    },
+    "raw_mode": {
+      "title": "No mapping found for this device",
+      "description": "No mapping file was found for model {model} (firmware {fw_code}). All channels are shown with generic, hash-based names instead of readable ones (raw_* entities, disabled by default). The integration still works, but consider contributing a mapping - see the issue tracker for how."
+    }
   }
 }

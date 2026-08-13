@@ -370,6 +370,12 @@ Damit ist der Fall aus Issue #20 (neues Gerät, kein Mapping) kein Totalausfall 
 sondern ein Komfortverlust — und der Nutzer kann sofort Daten sehen und daraus ein
 Mapping beisteuern.
 
+**Repair-Issue umgesetzt in P5** (`coordinator._report_mapping_status()`), weiter
+gefasst als hier ursprünglich geplant: nicht nur bei FW-Fallback (Stufe 2), sondern
+auch bei Raw-Modus (Stufe 3) — dort ist die Namensauflösung am schlechtesten, also
+am wichtigsten sichtbar zu machen. Je Host ein eigenes Issue (mehrere Geräte
+kollidieren nicht), wird beim Entladen des Config-Entry wieder entfernt.
+
 ### 5.6 Entprellung / Recorder
 
 **Umgesetzt in P3** (`custom_components/pooldose_live/entity.py`): resolution-bewusster
@@ -533,7 +539,7 @@ kein Argument mehr gegen die Dauerverbindung als Kernidee.
 | **P2** ✅ | HA-Skelett: manifest, config_flow, coordinator, `sensor` + `binary_sensor`, read-only. Setup-Ablauf gegenüber der ursprünglichen Planung überarbeitet (§5.7) | `custom_components/pooldose_live/`, parallel zur Core-Integration installierbar |
 | **P3** ✅ | Entprellung (resolution-bewusst + Heartbeat), Verfügbarkeitslogik (Standby-Ausnahme, §8.4), `diagnostics.py` | Recorder-tauglich, alltagstauglich |
 | **P4** ✅ | Schreiben: `number`, `select`, `switch` über HTTP `setInstantValues`, ohne Vorab-GET (B8 vermieden) | Funktionsgleichstand mit Core. Noch nicht live gegen das echte Gerät getestet (siehe §5.9) |
-| **P5** | Repair-Issues bei FW-Fallback, Übersetzungen (de/en) | Restliche Punkte, Raw-Modus/FW-Fallback selbst bereits in P1 erledigt |
+| **P5** ✅ | Repair-Issues bei FW-Fallback UND Raw-Modus (weiter gefasst als ursprünglich geplant), Übersetzungen (de/en) | Nutzer sieht sichtbar, wenn die Namensauflösung nicht optimal ist, mit Hinweis zum Beisteuern eines Mappings |
 | **P6** | HACS-Konformität: `hacs.json`, `version` im Manifest, Release-Tags, README | Installierbar über HACS |
 | **P7** | Optional: WS-Schreibformat erforschen — **getrennt, mit Bedacht, nicht am Produktivgerät** | offen |
 

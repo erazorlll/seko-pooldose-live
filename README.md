@@ -5,8 +5,8 @@ WebSocket** des Geräts statt HTTP-Polling.
 
 Zielgerät: SEKO PoolDose Double Spa (`PDPR1H04AW100`, FW `539292`).
 
-Status: **P4 — Schreibzugriff (`number`/`select`/`switch`), noch nicht live gegen
-das echte Gerät getestet.** P0–P3 sind abgeschlossen, siehe
+Status: **P5 — Repair-Issues, Übersetzungen.** P0–P4 sind abgeschlossen (Schreib-
+zugriff noch nicht live gegen das echte Gerät getestet), siehe
 [docs/konzept.md](docs/konzept.md).
 
 ## Warum
@@ -91,7 +91,23 @@ Encoding/Validierung sind vollständig offline verifiziert, ein erster echter
 Schreibversuch sollte aber gezielt und mit einem risikoarmen Wert erfolgen, nicht
 einfach automatisiert nebenbei.
 
-Tests: `tests/test_p2_manual.py` … `test_p4_manual.py` — kein regulärer
+## Repair-Issues, Übersetzungen (P5)
+
+Zeigt in HA (Einstellungen → System → Reparaturen) sichtbar an, wenn die
+Namensauflösung nicht optimal ist:
+
+- **FW-Fallback**: exaktes Modell, aber keine passende Firmware-Mapping-Datei
+  gefunden — ein anderer FW-Stand desselben Modells wurde verwendet.
+- **Raw-Modus**: gar kein Mapping für dieses Modell gefunden — alle Kanäle laufen
+  unter generischen `raw_*`-Namen.
+
+Beide Fälle sind funktionsfähig (Konzept-Kernidee gegen B2, kein Totalausfall wie
+bei der Core-Integration), aber der Nutzer soll es sehen und weiß, wie er ein
+Mapping beisteuern kann (derselbe Weg wie Issue #20 bei lmaertin/python-pooldose).
+Je Gerät ein eigenes Issue, wird beim Entladen des Config-Entry wieder entfernt.
+Übersetzt (de/en), wie der Config Flow.
+
+Tests: `tests/test_p2_manual.py` … `test_p5_manual.py` — kein regulärer
 `pytest`-Lauf für die HA-Tests, da `pytest-homeassistant-custom-component` unter
 Windows an `homeassistant.runner` (braucht `fcntl`, Unix-only) scheitert.
 Stattdessen eigenständige Skripte mit echten HA-Kernklassen

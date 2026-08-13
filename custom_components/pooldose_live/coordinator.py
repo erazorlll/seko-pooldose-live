@@ -18,14 +18,15 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from pooldose_live.channels import decode_devicedata, detect_prefix
-from pooldose_live.mapping import ModelMapping, ResolvedChannel
+from pooldose_live.mapping import MappingStatus, ModelMapping, ResolvedChannel
 from pooldose_live.mapping import load as load_mapping
 from pooldose_live.transport import PooldoseTransport, TransportEvent
 
-from .const import DOMAIN
+from .const import DOMAIN, ISSUE_FW_FALLBACK, ISSUE_RAW_MODE, ISSUES_URL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
             if prefix is None:
                 return
             self.mapping = load_mapping(*prefix)
+            self._report_mapping_status()
 
         resolved = self.mapping.resolve_all(channels)
         # visible=false erzeugt keine Entity (Konzept B3) - hier gefiltert,
@@ -133,3 +135,44 @@ class PooldoseLiveCoordinator(DataUpdateCoordinator[dict[str, ResolvedChannel]])
         self._last_display = display
 
         self.async_set_updated_data(by_name)
+
+    def _report_mapping_status(self) -> None:
+        """Repair-Issue bei FW-Fallback/Raw-Modus (Konzept §5.5/§5.9).
+
+        Beide Fälle sind funktionsfähig (Raw-Modus liefert generisch
+        benannte Kanäle statt eines Totalausfalls, Konzept-Kernidee gegen
+        B2) - aber der Nutzer soll sichtbar erfahren, dass die
+        Namensauflösung nicht optimal ist, und wie er zu einer besseren
+        Abdeckung beitragen kann (derselbe Weg wie Issue #20 bei
+        lmaertin/python-pooldose).
+        """
+        mapping = self.mapping
+        assert mapping is not None
+        if mapping.status == MappingStatus.FW_FALLBACK:
+            ir.async_create_issue(
+                self.hass, DOMAIN, f"{ISSUE_FW_FALLBACK}_{self.host}",
+                is_fixable=False, severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_FW_FALLBACK,
+                translation_placeholders={
+                    "model": mapping.model_id,
+                    "fw_code": mapping.fw_code.removeprefix("FW"),
+                    "used_fw": mapping.matched_fw or "?",
+                },
+                learn_more_url=ISSUES_URL,
+            )
+        elif mapping.status == MappingStatus.RAW:
+            ir.async_create_issue(
+                self.hass, DOMAIN, f"{ISSUE_RAW_MODE}_{self.host}",
+                is_fixable=False, severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_RAW_MODE,
+                translation_placeholders={
+                    "model": mapping.model_id,
+                    "fw_code": mapping.fw_code.removeprefix("FW"),
+                },
+                learn_more_url=ISSUES_URL,
+            )
+
+    def cleanup_issues(self) -> None:
+        """Repair-Issues entfernen, z. B. beim Entladen des Config-Entry."""
+        ir.async_delete_issue(self.hass, DOMAIN, f"{ISSUE_FW_FALLBACK}_{self.host}")
+        ir.async_delete_issue(self.hass, DOMAIN, f"{ISSUE_RAW_MODE}_{self.host}")
