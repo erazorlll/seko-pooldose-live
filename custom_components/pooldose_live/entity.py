@@ -12,15 +12,21 @@ Stunden abreißen, wenn ein Kanal einfach konstant bleibt.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
+import aiohttp
+
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from pooldose_live.mapping import ResolvedChannel
+from pooldose_live.write import WriteError, set_channel
 
 from .const import DOMAIN, MANUFACTURER
 from .coordinator import PooldoseLiveCoordinator
@@ -123,3 +129,27 @@ class PooldoseLiveEntity(CoordinatorEntity[PooldoseLiveCoordinator]):
             self._last_written_available = avail
             self._last_written_time = now
             self.async_write_ha_state()
+
+    async def _async_write_value(self, value: Any) -> None:
+        """Schreibt einen neuen Wert für diesen Kanal (Konzept §5.1/§5.6).
+
+        Kein optimistisches Setzen des lokalen Zustands - die Bestätigung
+        kommt mit dem nächsten WS-Tick (~4s) über den normalen Coordinator-
+        Update-Pfad, siehe pooldose_live.write für die Begründung.
+        """
+        resolved = self.resolved
+        mapping = self.coordinator.mapping
+        device_id = self.coordinator.last_snapshot_device_id
+        if resolved is None or mapping is None or device_id is None:
+            raise HomeAssistantError("Kein aktueller Kanal-Zustand vorhanden")
+
+        session = async_get_clientsession(self.hass)
+        try:
+            await set_channel(
+                session, self.coordinator.host, device_id, mapping,
+                resolved.channel, resolved.type, value,
+            )
+        except WriteError as err:
+            raise ServiceValidationError(str(err)) from err
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            raise HomeAssistantError(f"Schreiben fehlgeschlagen: {err}") from err

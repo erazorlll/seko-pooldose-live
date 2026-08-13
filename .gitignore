@@ -6,6 +6,7 @@ venv/
 *.egg-info/
 build/
 dist/
+.pytest_cache/
 
 # Mitschnitte (P0) — enthalten Rohdaten des Geräts, gehören nicht ins Repo
 *.jsonl

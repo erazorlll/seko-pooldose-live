@@ -1,5 +1,6 @@
-"""Die pooldose_live-Integration (P2 - Skelett, read-only, parallel zur
-Core-Integration `pooldose` installierbar - eigene Domain, siehe Konzept §5.1).
+"""Die pooldose_live-Integration - eigene Domain, parallel zur
+Core-Integration `pooldose` installierbar (Konzept §5.1). Seit P4 auch
+schreibend (number/select/switch, siehe entity.py/pooldose_live.write).
 """
 
 from __future__ import annotations
@@ -9,7 +10,13 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import PooldoseLiveConfigEntry, PooldoseLiveCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.SWITCH,
+]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: PooldoseLiveConfigEntry) -> bool:

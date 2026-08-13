@@ -444,6 +444,45 @@ WLAN-Daten redigiert), dazu Tick-Statistik: Frames/Minute, verpasste Ticks,
 Reconnects, längste Lücke. Genau das Material, aus dem heute die Mapping-Beiträge
 in Issue #20 entstanden sind — dann ohne CLI-Gefummel.
 
+**Umgesetzt in P3** (`custom_components/pooldose_live/diagnostics.py`): Mapping-Status
+und -Abdeckung, Sitzungsstatistik (Connects/Disconnects/Watchdog-Trips/Zyklen,
+längste Lücke, zuletzt bekannter Standby-Zustand), aufgelöste Kanäle, letzter
+Roh-Snapshot (Geräte-ID redigiert). Nur die laufende Sitzung, kein Ersatz für einen
+echten Mitschnitt wie in P0 — dafür bleibt `tools/ws_probe.py` das richtige Werkzeug.
+
+### 5.9 Schreiben (P4)
+
+Umgesetzt in `pooldose_live/write.py` (Bibliothek) + `number.py`/`select.py`/`switch.py`
+(HA-Plattformen). Kernentscheidungen:
+
+- **Kein Vorab-GET** (vermeidet B8): Validierung läuft gegen den zuletzt empfangenen
+  WS-Snapshot, nicht gegen einen frisch abgerufenen. Bestätigung kommt mit dem
+  nächsten Tick (~4s) über den normalen Coordinator-Pfad — kein optimistisches
+  Setzen des lokalen Zustands wie bei der Referenzintegration (dort bis zu 10 Minuten
+  falscher Anzeigewert möglich, wenn das Gerät abweicht, siehe B8).
+- **Validierung vor jedem Request**: Bereich/Schrittweite bei `number`
+  (`absMin`/`absMax`/`resolution` aus dem aktuellen Kanal), gültige Optionen bei
+  `select` (Reverse-Lookup über die generisch dekodierten `comboitems`, funktioniert
+  auch im Raw-Modus). Ungültige Eingaben werden lokal abgelehnt, es geht dabei kein
+  Request raus — mit 5 Tests verifiziert (`tests/test_write.py`, `tests/test_p4_manual.py`),
+  inklusive der Payload-Struktur (`{device_id: {full_key: [{"value", "type"}]}}`).
+- **`switch` nur bei echtem Mapping-Treffer**: Im Raw-Modus werden bare Booleans als
+  `binary_sensor` klassifiziert, nicht als `switch` (Konzept §5.5) — ohne
+  Mapping-Tabelle ist nicht bekannt, ob ein Kanal wirklich schreibbar ist.
+- **Bug beim Umsetzen gefunden**: `ModelMapping.matched_fw` war inkonsistent formatiert
+  (mit `"FW"`-Präfix im EXACT-Zweig, ohne im FW_FALLBACK-Zweig) — für den
+  Präfix-Aufbau beim Schreiben sicherheitsrelevant, da ein falscher Präfix den
+  falschen Kanal treffen könnte. Gefixt und mit einem Regressionstest abgesichert
+  (`tests/test_write.py::test_build_prefix_exact/raw`). War zuvor nie aufgefallen,
+  weil `matched_fw` bis dahin nur kosmetisch in `probe.py`s Tabellenausgabe auftauchte.
+
+**Noch nicht live gegen das echte Gerät getestet.** Anders als Lesen ist ein
+Schreibzugriff nicht risikofrei — die Spec warnt ausdrücklich, dass ein falsch
+geformter Frame Parameter einer realen Dosieranlage verstellen kann. Encoding und
+Validierung sind vollständig offline getestet (siehe oben); der erste echte
+Schreibversuch am Gerät sollte bewusst und mit einem risikoarmen Zielwert erfolgen
+(z. B. ein Sollwert auf seinen bereits aktuellen Stand gesetzt), nicht automatisiert.
+
 ---
 
 ## 6. Vorteile gegenüber heute — nüchtern
@@ -493,7 +532,7 @@ kein Argument mehr gegen die Dauerverbindung als Kernidee.
 | **P1** ✅ | Transport + Decoder + Mapping-Loader, ohne HA — inkl. Raw-Modus + FW-Fallback (vorgezogen aus P5, waren zum Testen des Loaders ohnehin nötig) | `python -m pooldose_live.probe --host …` zeigt aufgelöste Kanäle. Paket `src/pooldose_live/` |
 | **P2** ✅ | HA-Skelett: manifest, config_flow, coordinator, `sensor` + `binary_sensor`, read-only. Setup-Ablauf gegenüber der ursprünglichen Planung überarbeitet (§5.7) | `custom_components/pooldose_live/`, parallel zur Core-Integration installierbar |
 | **P3** ✅ | Entprellung (resolution-bewusst + Heartbeat), Verfügbarkeitslogik (Standby-Ausnahme, §8.4), `diagnostics.py` | Recorder-tauglich, alltagstauglich |
-| **P4** | Schreiben: `number`, `select`, `switch` über HTTP `setInstantValues` | Funktionsgleichstand mit Core |
+| **P4** ✅ | Schreiben: `number`, `select`, `switch` über HTTP `setInstantValues`, ohne Vorab-GET (B8 vermieden) | Funktionsgleichstand mit Core. Noch nicht live gegen das echte Gerät getestet (siehe §5.9) |
 | **P5** | Repair-Issues bei FW-Fallback, Übersetzungen (de/en) | Restliche Punkte, Raw-Modus/FW-Fallback selbst bereits in P1 erledigt |
 | **P6** | HACS-Konformität: `hacs.json`, `version` im Manifest, Release-Tags, README | Installierbar über HACS |
 | **P7** | Optional: WS-Schreibformat erforschen — **getrennt, mit Bedacht, nicht am Produktivgerät** | offen |

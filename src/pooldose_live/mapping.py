@@ -105,9 +105,11 @@ class ModelMapping:
     def __init__(self, model_id: str, fw_code: str, status: MappingStatus,
                 matched_fw: str | None, table: dict[str, dict[str, Any]] | None) -> None:
         self.model_id = model_id
-        self.fw_code = fw_code
+        self.fw_code = fw_code  # wie übergeben, i.d.R. MIT "FW"-Präfix (aus channels.detect_prefix)
         self.status = status
-        self.matched_fw = matched_fw
+        self.matched_fw = matched_fw  # OHNE "FW"-Präfix, None nur bei RAW - für EXACT und
+        # FW_FALLBACK einheitlich (z.B. "539292"), zum direkten Zusammensetzen des Präfix
+        # via f"{model_id}_FW{matched_fw}_" bei Schreibzugriffen (siehe write.py)
         self.table = table or {}
         self._by_hash: dict[str, list[tuple[str, dict]]] = {}
         for name, entry in self.table.items():
@@ -140,8 +142,8 @@ def load(model_id: str, fw_code: str) -> ModelMapping:
     exact_name = f"model_{resolved_model}_FW{fw_code.removeprefix('FW')}.json"
     available = _list_mapping_files()
     if exact_name in available:
-        return ModelMapping(model_id, fw_code, MappingStatus.EXACT, fw_code,
-                            _load_json(exact_name))
+        return ModelMapping(model_id, fw_code, MappingStatus.EXACT,
+                            fw_code.removeprefix("FW"), _load_json(exact_name))
 
     same_model_fws: list[str] = []
     for fname in available:

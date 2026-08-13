@@ -5,9 +5,9 @@ WebSocket** des Geräts statt HTTP-Polling.
 
 Zielgerät: SEKO PoolDose Double Spa (`PDPR1H04AW100`, FW `539292`).
 
-Status: **P3 — Entprellung, Verfügbarkeitslogik, Diagnostics.** P0–P2
-(Messungen, Transport/Decoder/Mapping-Bibliothek, HA-Skelett) sind
-abgeschlossen, siehe [docs/konzept.md](docs/konzept.md).
+Status: **P4 — Schreibzugriff (`number`/`select`/`switch`), noch nicht live gegen
+das echte Gerät getestet.** P0–P3 sind abgeschlossen, siehe
+[docs/konzept.md](docs/konzept.md).
 
 ## Warum
 
@@ -38,8 +38,7 @@ danach live jede Wertänderung. `--once` beendet nach der ersten Tabelle,
 | `mapping.py` | Dreistufiger Fallback: exaktes Modell+FW → gleiches Modell/andere FW → Raw-Modus (Konzept §5.5) |
 | `mappings/` | Vendorte Mapping-Tabellen aus `python-pooldose` (MIT), siehe `ATTRIBUTION.md` |
 | `probe.py` | CLI-Entry-Point für P1 |
-
-Noch kein Schreibzugriff (P4).
+| `write.py` | Schreibzugriff (P4): Validierung + `POST setInstantValues`, kein Vorab-GET |
 
 ## HA-Integration `custom_components/pooldose_live/` (P2)
 
@@ -77,12 +76,31 @@ regelmäßig grundlos fehlschlagen. Details in Konzept §5.7.
   exportierbar direkt aus HA, dasselbe Material wie Issue #20 bei
   lmaertin/python-pooldose, ohne CLI-Gefummel.
 
-Tests: `tests/test_p2_manual.py` + `tests/test_p3_manual.py` — kein regulärer
-`pytest`-Lauf, da `pytest-homeassistant-custom-component` unter Windows an
-`homeassistant.runner` (braucht `fcntl`, Unix-only) scheitert. Stattdessen
-eigenständige Skripte mit echten HA-Kernklassen (`python tests/test_p2_manual.py`,
-`python tests/test_p3_manual.py`). Auf einer echten (Linux-)HA-Instanz sollte
-das durch reguläre pytest-Fixtures ersetzt/ergänzt werden.
+## Schreibzugriff (P4)
+
+`number` + `select` + `switch`, dynamisch wie die read-only-Plattformen. Kein
+Vorab-GET vor dem Schreiben (vermeidet B8) — Validierung (Bereich/Schrittweite/
+Optionen) läuft gegen den zuletzt empfangenen WS-Snapshot. Bestätigung kommt mit
+dem nächsten Tick (~4s) über den normalen Coordinator-Pfad, kein optimistisches
+Setzen des Anzeigewerts. `switch` gibt es nur bei echtem Mapping-Treffer — im
+Raw-Modus werden bare Booleans als `binary_sensor` klassifiziert, nicht als
+`switch` (unklar, ob wirklich schreibbar).
+
+**Noch nicht live gegen das echte Gerät getestet** — bewusst, siehe Konzept §5.9:
+Encoding/Validierung sind vollständig offline verifiziert, ein erster echter
+Schreibversuch sollte aber gezielt und mit einem risikoarmen Wert erfolgen, nicht
+einfach automatisiert nebenbei.
+
+Tests: `tests/test_p2_manual.py` … `test_p4_manual.py` — kein regulärer
+`pytest`-Lauf für die HA-Tests, da `pytest-homeassistant-custom-component` unter
+Windows an `homeassistant.runner` (braucht `fcntl`, Unix-only) scheitert.
+Stattdessen eigenständige Skripte mit echten HA-Kernklassen
+(`python tests/test_p2_manual.py` usw.). `tests/test_write.py` ist reine
+Bibliothekslogik ohne HA-Abhängigkeit und läuft regulär über
+`python -m pytest tests/test_write.py -p no:homeassistant` (das `-p no:homeassistant`
+deaktiviert nur das global registrierte, unter Windows blockierte Plugin). Auf
+einer echten (Linux-)HA-Instanz sollten die manuellen Skripte durch reguläre
+pytest-Fixtures ersetzt/ergänzt werden.
 
 ## Dokumente
 
