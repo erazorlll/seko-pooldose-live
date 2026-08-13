@@ -1,155 +1,67 @@
-# seko-pooldose-live
+# SEKO PoolDose (Live)
 
-Home Assistant integration (HACS) for SEKO PoolDose with **live data over the
-local WebSocket** instead of HTTP polling.
+A [Home Assistant](https://www.home-assistant.io/) integration for the **SEKO PoolDose** pool/spa dosing controller, with **live updates** instead of a 10-minute wait.
 
-Target device: SEKO PoolDose Double Spa (`PDPR1H04AW100`, FW `539292`).
+Unofficial and community-maintained — not affiliated with SEKO.
 
-Status: **P6 — HACS-compliant, actually installable.** P0–P5 are complete
-(write access not yet tested live against the real device), see
-[docs/concept.md](docs/concept.md). Only P7 remains, optionally (exploring the
-WS write format, deliberately cautious).
+## Why use this instead of the official integration?
 
-## Installing via HACS
+The official `pooldose` integration polls the device's HTTP API every 600 seconds, so a change in pH, temperature, or an alarm can take up to 10 minutes to show up in Home Assistant. This integration instead listens to the device's own local WebSocket stream, which it already updates roughly every 4 seconds — so your dashboard and automations react in seconds, not minutes.
 
-1. HACS → Integrations → ⋮ → Custom repositories
-2. Add this repo as type "Integration"
-3. Install "SEKO PoolDose (Live)", restart Home Assistant
-4. Settings → Devices & Services → Add Integration → "SEKO PoolDose (Live)"
+It runs **side by side** with the official integration if you want (it uses its own domain), so you can compare or switch at your own pace.
 
-Self-contained — `custom_components/pooldose_live/` vendors the library
-(`vendor/pooldose_live/`), no separate `pip install` needed.
+## Requirements
 
-## Why
+- A SEKO PoolDose device reachable on your local network (tested against a PoolDose Double Spa, model `PDPR1H04AW100`; other PoolDose models should work too — see [Unknown models & firmware](#unknown-models--firmware) below)
+- Home Assistant with [HACS](https://hacs.xyz/) installed
+- No cloud account, API key, or extra setup on the device itself — it just needs to be on your network
 
-The official HA integration (`pooldose`, library `python-pooldose`) polls an
-HTTP API every 600 s. The device pushes the same data on its own over
-`ws://<host>:1334/` at a ~4.2 s tick — no authentication, no subscribe frame.
-Listening instead of asking brings a real-world factor of ~40 in freshness
-(measured, see concept §8.2 — the initial theoretical factor of ~143 didn't
-survive the measurement) and incidentally fixes a number of concrete
-weaknesses in the current solution.
+## Installation
 
-## Package `pooldose_live` (P1)
+This integration isn't in the HACS default store yet, so add it as a custom repository:
 
-```bash
-pip install -e .
-python -m pooldose_live.probe --host 192.168.0.74
-```
+1. HACS → the **⋮** menu (top right) → **Custom repositories**
+2. Repository: `https://github.com/erazorlll/seko-pooldose-live`, Type: **Integration**
+3. Find **SEKO PoolDose (Live)** in HACS and install it
+4. Restart Home Assistant
+5. **Settings → Devices & Services → Add Integration**, search for **SEKO PoolDose (Live)**
+6. Enter the IP address or hostname of your PoolDose device
 
-Connects, derives model/firmware directly from the data keys (no HTTP call
-needed), loads the matching mapping table, and shows the resolved channels —
-then every value change live. `--once` exits after the first table,
-`--show-invisible` also shows `visible: false` channels.
+That's it — no separate packages to install, everything the integration needs is bundled.
 
-| Module | Purpose |
-|---|---|
-| `transport.py` | One WS connection, reassembly, two watchdogs (connection + `instant_values` staleness, see concept §5.3), backoff |
-| `channels.py` | Raw devicedata dict → `Channel` objects (label decoding, units, comboitems) |
-| `mapping.py` | Three-tier fallback: exact model+FW → same model/different FW → raw mode (concept §5.5) |
-| `mappings/` | Vendored mapping tables from `python-pooldose` (MIT), see `ATTRIBUTION.md` |
-| `probe.py` | CLI entry point for P1 |
-| `write.py` | Write access (P4): validation + `POST setInstantValues`, no pre-emptive GET |
+## What you get
 
-## HA integration `custom_components/pooldose_live/` (P2)
+- **Sensors** for pH, ORP/chlorine, temperature, and other readings your device reports
+- **Binary sensors** for alarms and status flags (e.g. standby)
+- **Adjustable setpoints** (e.g. target pH) as `number` entities
+- **Options** (e.g. water meter unit) as `select` entities
+- **Switches** (e.g. pause dosing) where the device supports them
 
-Read-only: `sensor` + `binary_sensor`, created dynamically from the resolved
-channels (not from a fixed table like the core integration — the set of
-channels is only known at runtime, depending on a mapping hit or the raw
-fallback). `visible: false` channels don't create an entity (concept B3), the
-`alarm` flag ends up as an attribute on the sensor (concept B4).
+Which entities you get depends on your specific model and firmware — see below.
 
-**Setup doesn't wait for live data:** the config flow only checks whether the
-WebSocket port responds (10 s timeout) — it does not wait for a complete
-`instant_values` cycle. Per concept §8.2/§8.3 the device can legitimately stay
-silent for several minutes; a setup step that waited for that would fail for
-no reason on a regular basis. Details in concept §5.7.
+Entity availability briefly pauses if the device goes quiet for a few minutes (this is normal PoolDose behavior, not a connection problem) and resumes automatically once fresh data arrives.
 
-## Debouncing, availability, diagnostics (P3)
+## Unknown models & firmware
 
-- **Debouncing** (`entity.py`): each entity only writes state on a relevant
-  change (resolution-aware for numbers) or every 5 minutes (heartbeat), on
-  top of the coarse coordinator-wide equality check from P2. Without this,
-  every one of the ~40–70 entities would rewrite state on any single channel
-  changing — see concept §5.6/§8.2 for the numbers (422,600 vs. 6,200
-  writes/day).
-- **Availability**: entities become `unavailable` when the staleness watchdog
-  (concept §5.3) trips — except `alarm_system_standby`, which deliberately
-  stays visible during staleness because it's itself the most likely
-  diagnostic signal for the cause (concept §8.4).
-- **`diagnostics.py`**: last raw snapshot (serial number redacted) plus
-  session statistics (reconnects, longest gap, mapping status/coverage) —
-  exportable directly from HA, the same material that issue #20 at
-  lmaertin/python-pooldose grew out of, without CLI fiddling.
+Entity names are resolved from a mapping table specific to your device's model and firmware. If your exact combination isn't in that table yet, you'll still get working entities — just with less readable, hash-based names — and Home Assistant will show a **Repair** notification (Settings → System → Repairs) explaining what happened and how to help improve it (usually just sharing a diagnostics export on the [issue tracker](https://github.com/erazorlll/seko-pooldose-live/issues)).
 
-## Write access (P4)
+## Diagnostics
 
-`number` + `select` + `switch`, dynamic like the read-only platforms. No
-pre-emptive GET before writing (avoids B8) — validation (range/step/options)
-runs against the most recently received WS snapshot. Confirmation arrives
-with the next tick (~4s) through the normal coordinator path, no optimistic
-setting of the displayed value. `switch` only exists for an actual mapping
-hit — in raw mode, bare booleans are classified as `binary_sensor`, not
-`switch` (unclear whether they're actually writable).
+Each configured device supports Home Assistant's built-in diagnostics download (device page → **Download diagnostics**), useful for troubleshooting or reporting an issue — the serial number is redacted automatically.
 
-**Not yet tested live against the real device** — deliberately, see concept
-§5.9: encoding/validation are fully verified offline, but a first real write
-attempt should happen deliberately with a low-risk value, not just
-automatically along the way.
+## Known limitations
 
-## Repair issues, translations (P5)
+- Writing values (setpoints, switches, options) has been thoroughly tested in isolation but not yet extensively on live hardware — go carefully with unfamiliar values, particularly dosing-related ones
+- The device's unique ID is currently based on its network host, not its serial number
 
-Visibly surfaces in HA (Settings → System → Repairs) when name resolution
-isn't optimal:
+## Contributing
 
-- **FW fallback**: exact model match, but no matching firmware mapping file
-  found — a different FW revision of the same model was used.
-- **Raw mode**: no mapping found for this model at all — all channels run
-  under generic `raw_*` names.
-
-Both cases are functional (the concept's core idea against B2, no total
-outage like the core integration), but the user should see it and know how to
-contribute a mapping (the same path as issue #20 at lmaertin/python-pooldose).
-One issue per device, removed again when the config entry is unloaded.
-Translated (de/en), like the config flow.
-
-Tests: `tests/test_p2_manual.py` … `test_p5_manual.py` — no regular `pytest`
-run for the HA tests, since `pytest-homeassistant-custom-component` fails on
-Windows on `homeassistant.runner` (needs `fcntl`, Unix-only). Instead,
-standalone scripts using real HA core classes (`python tests/test_p2_manual.py`
-etc.). `tests/test_write.py` is pure library logic without an HA dependency
-and runs regularly via
-`python -m pytest tests/test_write.py -p no:homeassistant` (the
-`-p no:homeassistant` only disables the globally registered plugin that's
-blocked on Windows). On a real (Linux) HA instance, the manual scripts should
-be replaced/supplemented by regular pytest fixtures.
-
-## HACS compliance (P6)
-
-- **Vendoring instead of PyPI**: `custom_components/pooldose_live/vendor/pooldose_live/`
-  is a 1:1 copy of `src/pooldose_live/` (minus `probe.py`, pure P1 CLI
-  tooling). Fixes the previous "known gap" — a component installed via HACS
-  wasn't runnable before P6, because the actual transport/decoder/mapping
-  logic had to be `pip install`-ed separately. `manifest.json`'s
-  `"requirements": []` is now actually correct, not just a placeholder.
-  Details: [`custom_components/pooldose_live/vendor/README.md`](custom_components/pooldose_live/vendor/README.md).
-- **Sync check**: `tools/check_vendor_sync.py` (also `tests/test_vendor_sync.py`,
-  part of CI) ensures the vendored copy doesn't drift from
-  `src/pooldose_live/`. After changing the library:
-  `python tools/sync_vendor.py`.
-- **CI** (`.github/workflows/validate.yml`): `hacs/action`, `hassfest`, plus
-  all of our own tests — runs on Linux runners, where the plugin blocked on
-  Windows loads without issue.
-- `hacs.json`, `LICENSE` (MIT), version bump to `0.2.0` (package + manifest
-  in sync).
-
-## Documents
-
-- [`websocker-spec.md`](websocker-spec.md) — reverse-engineering results from the real device
-- [`docs/concept.md`](docs/concept.md) — analysis of existing solutions, findings, architecture concept, measurement results, phase plan
-- [`tools/README.md`](tools/README.md) — P0 diagnostic tools (recording, HTTP baseline)
+Bug reports, mapping contributions for new models/firmware, and pull requests are welcome — see the [issue tracker](https://github.com/erazorlll/seko-pooldose-live/issues).
 
 ## Credits
 
-The mapping tables (hash key → readable name) come from
-[lmaertin/python-pooldose](https://github.com/lmaertin/python-pooldose) (MIT).
+Channel name mappings are derived from [lmaertin/python-pooldose](https://github.com/lmaertin/python-pooldose) (MIT license) — see [`ATTRIBUTION.md`](src/pooldose_live/mappings/ATTRIBUTION.md) for details.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
